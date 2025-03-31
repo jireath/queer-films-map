@@ -13,10 +13,12 @@ const QueerFilmsMap = ({ readOnly = false }) => {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const searchInput = useRef(null);
+  const mapInitializedRef = useRef(false);
   
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [searchResults, setSearchResults] = useState([]);
   const [showSearchResults, setShowSearchResults] = useState(false);
+  const [mapLoaded, setMapLoaded] = useState(false);
   
   const [films, setFilms] = useState([
     {
@@ -47,205 +49,233 @@ const QueerFilmsMap = ({ readOnly = false }) => {
 
   // Initialize map
   useEffect(() => {
-    if (!mapContainer.current || map.current) return;
-
-    try {
-      map.current = new mapboxgl.Map({
-        container: mapContainer.current,
-        style: 'mapbox://styles/mapbox/dark-v11',
-        center: [-40, 20],
-        zoom: 1.5,
-        projection: 'globe'
-      });
-
-      map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
-
-      // Wait for map to load before adding data
-      map.current.on('load', () => {
-        // Add a source for film points that will be clustered
-        map.current.addSource('films', {
-          type: 'geojson',
-          data: {
-            type: 'FeatureCollection',
-            features: []
-          },
-          cluster: true,
-          clusterMaxZoom: 14,
-          clusterRadius: 50
+    // Only initialize the map once and when the container exists
+    if (!mapContainer.current || mapInitializedRef.current) return;
+    
+    // Use a small delay to ensure DOM is fully rendered
+    const timer = setTimeout(() => {
+      try {
+        console.log("Initializing map...");
+        map.current = new mapboxgl.Map({
+          container: mapContainer.current,
+          style: 'mapbox://styles/mapbox/dark-v11',
+          center: [-40, 20],
+          zoom: 1.5,
+          projection: 'globe'
         });
 
-        // Add cluster circles
-        map.current.addLayer({
-          id: 'clusters',
-          type: 'circle',
-          source: 'films',
-          filter: ['has', 'point_count'],
-          paint: {
-            'circle-color': [
-              'step',
-              ['get', 'point_count'],
-              '#ff69b4',
-              10,
-              '#da70d6',
-              30,
-              '#9370db'
-            ],
-            'circle-radius': [
-              'step',
-              ['get', 'point_count'],
-              20,
-              10,
-              30,
-              30,
-              40
-            ]
+        map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+
+        // Set flag to avoid re-initialization
+        mapInitializedRef.current = true;
+
+        // Wait for map to load before adding data
+        map.current.on('load', () => {
+          console.log("Map loaded, adding data layers...");
+          setMapLoaded(true);
+          
+          // Add a source for film points that will be clustered
+          map.current.addSource('films', {
+            type: 'geojson',
+            data: {
+              type: 'FeatureCollection',
+              features: []
+            },
+            cluster: true,
+            clusterMaxZoom: 14,
+            clusterRadius: 50
+          });
+
+          // Add cluster circles
+          map.current.addLayer({
+            id: 'clusters',
+            type: 'circle',
+            source: 'films',
+            filter: ['has', 'point_count'],
+            paint: {
+              'circle-color': [
+                'step',
+                ['get', 'point_count'],
+                '#ff69b4',
+                10,
+                '#da70d6',
+                30,
+                '#9370db'
+              ],
+              'circle-radius': [
+                'step',
+                ['get', 'point_count'],
+                20,
+                10,
+                30,
+                30,
+                40
+              ]
+            }
+          });
+
+          // Add cluster count labels
+          map.current.addLayer({
+            id: 'cluster-count',
+            type: 'symbol',
+            source: 'films',
+            filter: ['has', 'point_count'],
+            layout: {
+              'text-field': '{point_count_abbreviated}',
+              'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
+              'text-size': 12
+            },
+            paint: {
+              'text-color': '#ffffff'
+            }
+          });
+
+          // Add unclustered point layer
+          map.current.addLayer({
+            id: 'unclustered-point',
+            type: 'circle',
+            source: 'films',
+            filter: ['!', ['has', 'point_count']],
+            paint: {
+              'circle-color': '#ff69b4',
+              'circle-radius': 8,
+              'circle-stroke-width': 1,
+              'circle-stroke-color': '#fff'
+            }
+          });
+
+          // Update initial data
+          updateMapData();
+        });
+
+        // Add click handlers
+        map.current.on('click', 'clusters', (e) => {
+          const features = map.current.queryRenderedFeatures(e.point, {
+            layers: ['clusters']
+          });
+          const clusterId = features[0].properties.cluster_id;
+          map.current.getSource('films').getClusterExpansionZoom(
+            clusterId,
+            (err, zoom) => {
+              if (err) return;
+              map.current.easeTo({
+                center: features[0].geometry.coordinates,
+                zoom: zoom
+              });
+            }
+          );
+        });
+
+        map.current.on('click', 'unclustered-point', (e) => {
+          const coordinates = e.features[0].geometry.coordinates.slice();
+          const { title, year, description, location } = e.features[0].properties;
+
+          new mapboxgl.Popup()
+            .setLngLat(coordinates)
+            .setHTML(`
+              <div class="p-2">
+                <h3 class="font-bold">${title} (${year})</h3>
+                <p class="text-sm">${location}</p>
+                <p class="text-sm mt-1">${description}</p>
+              </div>
+            `)
+            .addTo(map.current);
+        });
+
+        // Add click handler for adding new locations
+        map.current.on('click', (e) => {
+          // Don't allow adding markers in readOnly mode
+          if (readOnly) return;
+
+          const features = map.current.queryRenderedFeatures(e.point, {
+            layers: ['clusters', 'unclustered-point']
+          });
+          if (features.length > 0) return;
+
+          // Remove existing temporary marker if any
+          if (window.tempMarker) {
+            window.tempMarker.remove();
           }
+
+          // Add a temporary marker
+          window.tempMarker = new mapboxgl.Marker({ color: '#ff69b4' })
+            .setLngLat(e.lngLat)
+            .addTo(map.current);
+
+          setSelectedLocation({
+            lng: e.lngLat.lng,
+            lat: e.lngLat.lat
+          });
+          setShowAddForm(true);
         });
 
-        // Add cluster count labels
-        map.current.addLayer({
-          id: 'cluster-count',
-          type: 'symbol',
-          source: 'films',
-          filter: ['has', 'point_count'],
-          layout: {
-            'text-field': '{point_count_abbreviated}',
-            'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
-            'text-size': 12
-          },
-          paint: {
-            'text-color': '#ffffff'
-          }
+        // Change cursor on hover
+        map.current.on('mouseenter', ['clusters', 'unclustered-point'], () => {
+          map.current.getCanvas().style.cursor = 'pointer';
+        });
+        
+        map.current.on('mouseleave', ['clusters', 'unclustered-point'], () => {
+          map.current.getCanvas().style.cursor = '';
         });
 
-        // Add unclustered point layer
-        map.current.addLayer({
-          id: 'unclustered-point',
-          type: 'circle',
-          source: 'films',
-          filter: ['!', ['has', 'point_count']],
-          paint: {
-            'circle-color': '#ff69b4',
-            'circle-radius': 8,
-            'circle-stroke-width': 1,
-            'circle-stroke-color': '#fff'
-          }
-        });
-
-        // Update initial data
-        updateMapData();
-      });
-
-      // Add click handlers
-      map.current.on('click', 'clusters', (e) => {
-        const features = map.current.queryRenderedFeatures(e.point, {
-          layers: ['clusters']
-        });
-        const clusterId = features[0].properties.cluster_id;
-        map.current.getSource('films').getClusterExpansionZoom(
-          clusterId,
-          (err, zoom) => {
-            if (err) return;
-            map.current.easeTo({
-              center: features[0].geometry.coordinates,
-              zoom: zoom
-            });
-          }
-        );
-      });
-
-      map.current.on('click', 'unclustered-point', (e) => {
-        const coordinates = e.features[0].geometry.coordinates.slice();
-        const { title, year, description, location } = e.features[0].properties;
-
-        new mapboxgl.Popup()
-          .setLngLat(coordinates)
-          .setHTML(`
-            <div class="p-2">
-              <h3 class="font-bold">${title} (${year})</h3>
-              <p class="text-sm">${location}</p>
-              <p class="text-sm mt-1">${description}</p>
-            </div>
-          `)
-          .addTo(map.current);
-      });
-
-      // Add click handler for adding new locations
-      map.current.on('click', (e) => {
-        // Don't allow adding markers in readOnly mode
-        if (readOnly) return;
-
-        const features = map.current.queryRenderedFeatures(e.point, {
-          layers: ['clusters', 'unclustered-point']
-        });
-        if (features.length > 0) return;
-
-        // Remove existing temporary marker if any
-        if (window.tempMarker) {
-          window.tempMarker.remove();
-        }
-
-        // Add a temporary marker
-        window.tempMarker = new mapboxgl.Marker({ color: '#ff69b4' })
-          .setLngLat(e.lngLat)
-          .addTo(map.current);
-
-        setSelectedLocation({
-          lng: e.lngLat.lng,
-          lat: e.lngLat.lat
-        });
-        setShowAddForm(true);
-      });
-
-      // Change cursor on hover
-      map.current.on('mouseenter', ['clusters', 'unclustered-point'], () => {
-        map.current.getCanvas().style.cursor = 'pointer';
-      });
-      
-      map.current.on('mouseleave', ['clusters', 'unclustered-point'], () => {
-        map.current.getCanvas().style.cursor = '';
-      });
-
-    } catch (error) {
-      console.error('Error initializing map:', error);
-    }
-
+      } catch (error) {
+        console.error('Error initializing map:', error);
+      }
+    }, 500); // Small delay to ensure DOM is ready
+    
     return () => {
-      if (map.current) map.current.remove();
+      clearTimeout(timer);
+      if (map.current) {
+        map.current.remove();
+        mapInitializedRef.current = false;
+      }
     };
   }, []);
 
   // Update map data when films change
   const updateMapData = () => {
-    if (!map.current || !map.current.isStyleLoaded()) return;
+    if (!map.current || !map.current.isStyleLoaded()) {
+      console.log("Map not ready for data update, will try again later");
+      return;
+    }
 
-    const geojson = {
-      type: 'FeatureCollection',
-      features: films.map(film => ({
-        type: 'Feature',
-        geometry: {
-          type: 'Point',
-          coordinates: [film.coordinates.lng, film.coordinates.lat]
-        },
-        properties: {
-          id: film.id,
-          title: film.title,
-          location: film.location,
-          year: film.year,
-          description: film.description
-        }
-      }))
-    };
+    try {
+      console.log("Updating map data with films:", films.length);
+      const geojson = {
+        type: 'FeatureCollection',
+        features: films.map(film => ({
+          type: 'Feature',
+          geometry: {
+            type: 'Point',
+            coordinates: [film.coordinates.lng, film.coordinates.lat]
+          },
+          properties: {
+            id: film.id,
+            title: film.title,
+            location: film.location,
+            year: film.year,
+            description: film.description
+          }
+        }))
+      };
 
-    const source = map.current.getSource('films');
-    if (source) {
-      source.setData(geojson);
+      const source = map.current.getSource('films');
+      if (source) {
+        source.setData(geojson);
+      } else {
+        console.warn("Films source not found on map");
+      }
+    } catch (error) {
+      console.error("Error updating map data:", error);
     }
   };
 
+  // Update map data when films change and map is loaded
   useEffect(() => {
-    updateMapData();
-  }, [films]);
+    if (mapLoaded) {
+      updateMapData();
+    }
+  }, [films, mapLoaded]);
 
   const handleSearch = async (query) => {
     if (!query) {
@@ -255,9 +285,7 @@ const QueerFilmsMap = ({ readOnly = false }) => {
     }
 
     try {
-      const response = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?access_token=${mapboxgl.accessToken}`
-      );
+      const response = await fetch(`/api/geocode?query=${encodeURIComponent(query)}`);
       const data = await response.json();
       setSearchResults(data.features);
       setShowSearchResults(true);
@@ -293,20 +321,31 @@ const QueerFilmsMap = ({ readOnly = false }) => {
 
   return (
     <div className="w-full h-screen relative">
-      <div ref={mapContainer} className="absolute inset-0" />
+      {/* Add debug info to help troubleshoot */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="absolute top-0 right-0 z-50 bg-black bg-opacity-50 text-white p-2 text-xs">
+          Map Initialized: {mapInitializedRef.current ? 'Yes' : 'No'}<br/>
+          Map Loaded: {mapLoaded ? 'Yes' : 'No'}<br/>
+          Films: {films.length}
+        </div>
+      )}
+      
+      <div ref={mapContainer} className="absolute inset-0" style={{width: '100%', height: '100%'}} />
       
       <div className="absolute top-4 left-4 z-10 space-y-4">
         <Card className="w-96">
           <CardHeader>
             <CardTitle className="flex justify-between items-center">
               <span>Queer Films World Map</span>
-              <Button 
-                onClick={() => setShowAddForm(!showAddForm)}
-                className="flex items-center gap-2"
-              >
-                <Plus className="h-4 w-4" />
-                Add Film
-              </Button>
+              {!readOnly && (
+                <Button 
+                  onClick={() => setShowAddForm(!showAddForm)}
+                  className="flex items-center gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Film
+                </Button>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
