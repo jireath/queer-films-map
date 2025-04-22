@@ -5,15 +5,22 @@ import { Input } from '@/components/ui/input';
 import { MapPin, Plus, X, Search } from 'lucide-react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';  // Important: Keep this import
+import { useAuth } from '@/contexts/AuthContext';
 
 // Replace with your actual token
 mapboxgl.accessToken = 'pk.eyJ1IjoiamltcmFldGgiLCJhIjoiY203M3ppazIzMDR1bjJycHg2eXNueXUwZSJ9.mH29QT02-7Egh9TTW3dnog';
 
-const QueerFilmsMap = ({ readOnly = false }) => {
+const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const searchInput = useRef(null);
   const mapInitializedRef = useRef(false);
+  
+  // Get auth context to determine if user can edit
+  const { user } = useAuth();
+  
+  // If readOnly is explicitly set, use that value, otherwise determine from auth state
+  const readOnly = explicitReadOnly !== undefined ? explicitReadOnly : !user;
   
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [searchResults, setSearchResults] = useState([]);
@@ -319,6 +326,23 @@ const QueerFilmsMap = ({ readOnly = false }) => {
     setShowAddForm(false);
   };
 
+  // Function to handle logging out and resetting form state
+  const resetState = () => {
+    setShowAddForm(false);
+    setSelectedLocation(null);
+    if (window.tempMarker) {
+      window.tempMarker.remove();
+    }
+  };
+
+  // Watch for changes in readOnly state
+  useEffect(() => {
+    // When user logs out (readOnly becomes true), reset the form
+    if (readOnly) {
+      resetState();
+    }
+  }, [readOnly]);
+
   return (
     <div className="w-full h-screen relative">
       {/* Add debug info to help troubleshoot */}
@@ -326,7 +350,9 @@ const QueerFilmsMap = ({ readOnly = false }) => {
         <div className="absolute top-0 right-0 z-50 bg-black bg-opacity-50 text-white p-2 text-xs">
           Map Initialized: {mapInitializedRef.current ? 'Yes' : 'No'}<br/>
           Map Loaded: {mapLoaded ? 'Yes' : 'No'}<br/>
-          Films: {films.length}
+          Films: {films.length}<br/>
+          Read Only: {readOnly ? 'Yes' : 'No'}<br/>
+          User: {user ? 'Authenticated' : 'Anonymous'}
         </div>
       )}
       
@@ -374,6 +400,13 @@ const QueerFilmsMap = ({ readOnly = false }) => {
                 </Card>
               )}
             </div>
+            
+            {/* Add a message for authenticated users */}
+            {!readOnly && (
+              <p className="text-xs text-muted-foreground mt-2">
+                Click anywhere on the map to add a new film location.
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -389,6 +422,9 @@ const QueerFilmsMap = ({ readOnly = false }) => {
                 onClick={() => {
                   setShowAddForm(false);
                   setSelectedLocation(null);
+                  if (window.tempMarker) {
+                    window.tempMarker.remove();
+                  }
                 }}
               >
                 <X className="h-4 w-4" />
