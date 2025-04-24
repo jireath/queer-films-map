@@ -11,6 +11,164 @@ import { getUserFilms, deleteFilm } from '@/lib/services/filmService';
 import { createClient } from '@/lib/supabase/client';
 import { MapPin, Calendar, CheckCircle, Clock, XCircle, AlertCircle, Loader2, Edit, Trash } from 'lucide-react';
 import Link from 'next/link';
+// Import AdminPanel only if available - otherwise this line can be commented out
+// import AdminPanel from '@/components/AdminPanel';
+
+// Simple approval panel component for admin functions
+function ApprovalPanel() {
+  const [pendingFilms, setPendingFilms] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Fetch pending films
+  useEffect(() => {
+    const fetchPendingFilms = async () => {
+      try {
+        setLoading(true);
+        const supabase = createClient();
+        
+        // Fetch all pending films
+        const { data, error } = await supabase
+          .from('films')
+          .select('*')
+          .eq('status', 'pending');
+          
+        if (error) throw error;
+        setPendingFilms(data || []);
+      } catch (err) {
+        console.error('Error fetching pending films:', err);
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchPendingFilms();
+  }, []);
+
+  // Approve a film
+  const handleApprove = async (filmId) => {
+    try {
+      const supabase = createClient();
+      
+      const { error } = await supabase
+        .from('films')
+        .update({ status: 'approved' })
+        .eq('id', filmId);
+        
+      if (error) throw error;
+      
+      // Update local state
+      setPendingFilms(pendingFilms.filter(film => film.id !== filmId));
+      alert('Film approved successfully!');
+    } catch (err) {
+      console.error('Error approving film:', err);
+      alert('Failed to approve film: ' + err.message);
+    }
+  };
+
+  // Reject a film
+  const handleReject = async (filmId) => {
+    const rejectionReason = prompt('Please provide a reason for rejection:');
+    if (rejectionReason === null) return; // User cancelled
+    
+    try {
+      const supabase = createClient();
+      
+      const { error } = await supabase
+        .from('films')
+        .update({ 
+          status: 'rejected',
+          rejection_reason: rejectionReason || 'No reason provided'
+        })
+        .eq('id', filmId);
+        
+      if (error) throw error;
+      
+      // Update local state
+      setPendingFilms(pendingFilms.filter(film => film.id !== filmId));
+      alert('Film rejected successfully!');
+    } catch (err) {
+      console.error('Error rejecting film:', err);
+      alert('Failed to reject film: ' + err.message);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="py-8 flex justify-center items-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <span className="ml-2">Loading pending films...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 border border-destructive rounded-md text-destructive">
+        <h3 className="font-semibold">Error loading pending films</h3>
+        <p>{error}</p>
+      </div>
+    );
+  }
+
+  if (pendingFilms.length === 0) {
+    return (
+      <div className="text-center py-8">
+        <CheckCircle className="h-12 w-12 mx-auto text-primary mb-4" />
+        <p className="text-muted-foreground">No pending films to review!</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {pendingFilms.map(film => (
+        <Card key={film.id} className="overflow-hidden">
+          <div className="p-4">
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="text-lg font-semibold mb-1">{film.title} ({film.year})</h3>
+                <p className="text-sm text-muted-foreground mb-1">
+                  Location: {film.location}
+                </p>
+                
+                <div className="bg-muted p-3 rounded-md mb-3">
+                  <p className="text-sm">{film.description}</p>
+                </div>
+                
+                <div className="flex items-center text-yellow-500">
+                  <Clock className="h-4 w-4 mr-1" />
+                  <span>Pending Review</span>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex space-x-3 mt-4">
+              <Button 
+                variant="default" 
+                className="flex items-center"
+                onClick={() => handleApprove(film.id)}
+              >
+                <CheckCircle className="h-4 w-4 mr-2" />
+                Approve
+              </Button>
+              
+              <Button 
+                variant="destructive" 
+                className="flex items-center"
+                onClick={() => handleReject(film.id)}
+              >
+                <XCircle className="h-4 w-4 mr-2" />
+                Reject
+              </Button>
+            </div>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const { user, loading: authLoading } = useAuth();
@@ -19,6 +177,8 @@ export default function Dashboard() {
   const [error, setError] = useState(null);
   const [profile, setProfile] = useState(null);
   const [updating, setUpdating] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [debugInfo, setDebugInfo] = useState(null); // Add debug info state
   const router = useRouter();
 
   // Redirect if not authenticated
@@ -35,28 +195,55 @@ export default function Dashboard() {
 
       try {
         setLoading(true);
+        setDebugInfo(null);
         
         // Fetch user's films
-        const userFilms = await getUserFilms(user.id);
-        setFilms(userFilms);
+        try {
+          const userFilms = await getUserFilms(user.id);
+          console.log('Fetched films:', userFilms);
+          setFilms(userFilms || []);
+        } catch (filmError) {
+          console.error('Error fetching films:', filmError);
+          setDebugInfo(prev => {
+            const newDebugInfo = prev || '';
+            return newDebugInfo + '\nFilms error: ' + JSON.stringify(filmError, Object.getOwnPropertyNames(filmError));
+          });
+          // Continue to profile fetch even if films fetch fails
+        }
         
         // Fetch user profile
-        const supabase = createClient();
-        const { data: profileData, error: profileError } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single();
-          
-        if (profileError) {
-          console.error('Error fetching profile:', profileError);
-        } else {
-          setProfile(profileData);
+        try {
+          const supabase = createClient();
+          const { data: profileData, error: profileError } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single();
+            
+          if (profileError) {
+            console.error('Error fetching profile:', profileError);
+            setDebugInfo(prev => {
+              const newDebugInfo = prev || '';
+              return newDebugInfo + '\nProfile error: ' + JSON.stringify(profileError, Object.getOwnPropertyNames(profileError));
+            });
+          } else {
+            console.log('Fetched profile:', profileData);
+            setProfile(profileData);
+            // Check if is_admin field exists, default to false if not
+            setIsAdmin(profileData?.is_admin === true);
+          }
+        } catch (profileFetchError) {
+          console.error('Exception fetching profile:', profileFetchError);
+          setDebugInfo(prev => {
+            const newDebugInfo = prev || '';
+            return newDebugInfo + '\nProfile fetch error: ' + JSON.stringify(profileFetchError, Object.getOwnPropertyNames(profileFetchError));
+          });
         }
         
       } catch (err) {
         console.error('Error fetching data:', err);
-        setError('Failed to load your data. Please try again later.');
+        setError(`Failed to load your data: ${err.message || 'Unknown error'}`);
+        setDebugInfo('Main error: ' + JSON.stringify(err, Object.getOwnPropertyNames(err)));
       } finally {
         setLoading(false);
       }
@@ -74,13 +261,21 @@ export default function Dashboard() {
       setUpdating(true);
       
       const supabase = createClient();
+      
+      // Create update object with only the fields we want to update
+      const updateData = {
+        full_name: profile.full_name,
+        username: profile.username
+      };
+      
+      // Only include website if it exists in the profile
+      if (profile.website !== undefined) {
+        updateData.website = profile.website;
+      }
+      
       const { error } = await supabase
         .from('profiles')
-        .update({
-          full_name: profile.full_name,
-          username: profile.username,
-          website: profile.website
-        })
+        .update(updateData)
         .eq('id', user.id);
         
       if (error) throw error;
@@ -88,24 +283,62 @@ export default function Dashboard() {
       alert('Profile updated successfully!');
     } catch (err) {
       console.error('Error updating profile:', err);
-      alert('Failed to update profile. Please try again.');
+      alert(`Failed to update profile: ${err.message || 'Unknown error'}`);
     } finally {
       setUpdating(false);
     }
   };
 
-  // Handle film deletion
+  // Handle film deletion - improved version
   const handleDeleteFilm = async (filmId) => {
     if (!confirm('Are you sure you want to delete this film? This action cannot be undone.')) {
       return;
     }
     
     try {
-      await deleteFilm(filmId);
+      setDebugInfo(`Attempting to delete film ID: ${filmId}`);
+      
+      // Direct database deletion as a fallback if the service function fails
+      const supabase = createClient();
+      
+      // First check if film exists and user owns it
+      const { data: filmData, error: filmError } = await supabase
+        .from('films')
+        .select('user_id')
+        .eq('id', filmId)
+        .single();
+        
+      if (filmError) {
+        setDebugInfo(prev => `${prev}\nError checking film: ${filmError.message}`);
+        throw filmError;
+      }
+      
+      if (filmData.user_id !== user.id) {
+        setDebugInfo(prev => `${prev}\nPermission denied: User doesn't own this film`);
+        throw new Error("You don't have permission to delete this film");
+      }
+      
+      // Proceed with deletion
+      const { error: deleteError } = await supabase
+        .from('films')
+        .delete()
+        .eq('id', filmId);
+        
+      if (deleteError) {
+        setDebugInfo(prev => `${prev}\nDeletion error: ${deleteError.message}`);
+        throw deleteError;
+      }
+      
+      setDebugInfo(prev => `${prev}\nFilm deleted successfully!`);
+      
+      // Update the UI by removing the deleted film
       setFilms(films.filter(film => film.id !== filmId));
+      
+      alert('Film deleted successfully!');
     } catch (err) {
       console.error('Error deleting film:', err);
-      alert('Failed to delete film. Please try again.');
+      setDebugInfo(prev => `${prev}\nException: ${JSON.stringify(err, Object.getOwnPropertyNames(err))}`);
+      alert(`Failed to delete film: ${err.message || 'Unknown error'}`);
     }
   };
 
@@ -127,6 +360,12 @@ export default function Dashboard() {
           <CardContent className="p-6">
             <h2 className="text-xl font-semibold text-destructive mb-2">Error</h2>
             <p>{error}</p>
+            {debugInfo && (
+              <div className="mt-4 p-4 bg-muted rounded-md overflow-auto">
+                <h3 className="text-sm font-semibold mb-2">Debug Information:</h3>
+                <pre className="text-xs whitespace-pre-wrap">{debugInfo}</pre>
+              </div>
+            )}
             <Button 
               variant="outline" 
               className="mt-4"
@@ -193,6 +432,18 @@ export default function Dashboard() {
     <div className="container mx-auto py-8 px-4">
       <h1 className="text-3xl font-bold mb-8">Your Dashboard</h1>
 
+      {/* Debug info for development */}
+      {debugInfo && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Debug Information</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <pre className="text-xs whitespace-pre-wrap overflow-auto bg-muted p-4 rounded-md">{debugInfo}</pre>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <Card>
           <CardHeader className="pb-2">
@@ -226,6 +477,7 @@ export default function Dashboard() {
         <TabsList>
           <TabsTrigger value="films">Your Films</TabsTrigger>
           <TabsTrigger value="profile">Profile Settings</TabsTrigger>
+          {isAdmin && <TabsTrigger value="admin">Admin Panel</TabsTrigger>}
         </TabsList>
         
         <TabsContent value="films" className="space-y-6">
@@ -406,6 +658,39 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </TabsContent>
+        
+        {/* Admin Tab - Only show if AdminPanel component exists and user is admin */}
+        {isAdmin && (
+          <TabsContent value="admin">
+            <Card>
+              <CardHeader>
+                <CardTitle>Admin Functions</CardTitle>
+                <CardDescription>
+                  Manage film approvals and system settings
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {/* Temporary admin functions until the AdminPanel component is available */}
+                <div className="space-y-6">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Pending Films</CardTitle>
+                      <CardDescription>
+                        Approve or reject submitted films
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-4">
+                        {/* Simple admin approval interface */}
+                        <ApprovalPanel />
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );
