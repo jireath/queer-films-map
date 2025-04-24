@@ -34,7 +34,7 @@ export default function Home() {
       </div>
       
       {/* Only show overlay when not authenticated */}
-      {!user && (
+      {/* {!user && (
         <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
           <div className="bg-card p-6 rounded-lg shadow-lg max-w-md w-full m-4 text-center space-y-4">
             <h1 className="text-2xl font-bold">Queer Films Archive</h1>
@@ -51,35 +51,7 @@ export default function Home() {
             </Link>
           </div>
         </div>
-      )}
-      
-      {/* Show user info and logout when authenticated */}
-      {user && (
-        <div className="absolute top-4 right-4 z-10">
-          <UserPanel />
-        </div>
-      )}
+      )} */}
     </main>
-  );
-}
-
-// User panel component to show when authenticated
-function UserPanel() {
-  const { user, signOut } = useAuth();
-  
-  return (
-    <div className="bg-card p-4 rounded-lg shadow-lg">
-      <div className="text-sm mb-2">
-        Signed in as: <span className="font-bold">{user?.email}</span>
-      </div>
-      <Button 
-        variant="outline" 
-        size="sm" 
-        onClick={signOut}
-        className="w-full"
-      >
-        Sign Out
-      </Button>
-    </div>
   );
 }

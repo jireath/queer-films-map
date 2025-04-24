@@ -22,7 +22,15 @@ export function createClient() {
   
   try {
     // Create the client
-    supabaseInstance = createBrowserClient(url, key);
+    supabaseInstance = createBrowserClient(url, key, {
+      // Make sure to include this auth configuration
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true
+      }
+    });
+    
+    // Check if auth is initialized
     console.log('Supabase client created successfully');
     return supabaseInstance;
   } catch (error) {
