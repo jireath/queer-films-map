@@ -13,6 +13,50 @@ import Link from 'next/link';
 // Replace with your actual token
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
+function debugCoordinatesFormat() {
+  // Get a supabase client
+  const supabase = createClient();
+  
+  // Fetch a small sample of films with coordinates
+  supabase
+    .from('films')
+    .select('id, title, coordinates')
+    .limit(5)
+    .then(({ data, error }) => {
+      if (error) {
+        console.error('Error fetching sample films:', error);
+        return;
+      }
+      
+      console.log('===== COORDINATES DEBUG =====');
+      data.forEach(film => {
+        console.log(`Film "${film.title}" (id: ${film.id}):`);
+        console.log('  Coordinates type:', typeof film.coordinates);
+        console.log('  Raw value:', film.coordinates);
+        
+        // If it's a string, show what our regex would extract
+        if (typeof film.coordinates === 'string') {
+          const match = film.coordinates.match(/POINT\(([^ ]+) ([^ ]+)\)/);
+          console.log('  Regex match result:', match);
+          if (match) {
+            console.log('  Parsed values:', {
+              lng: parseFloat(match[1]),
+              lat: parseFloat(match[2])
+            });
+          }
+        }
+        // If it's an object, show its structure
+        else if (typeof film.coordinates === 'object') {
+          console.log('  Object keys:', Object.keys(film.coordinates));
+          if (film.coordinates && film.coordinates.coordinates) {
+            console.log('  GeoJSON coordinates:', film.coordinates.coordinates);
+          }
+        }
+        console.log('-------------------------');
+      });
+    });
+}
+
 const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
   const mapContainer = useRef(null);
   const map = useRef(null);
@@ -50,24 +94,105 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
         setLoading(true);
         const filmsData = await getAllApprovedFilms();
         
-        // Transform data format if needed
+        // Debug: Log raw film data from database
+        console.log('Raw films data from database:', filmsData);
+        
+        // Transform data format with enhanced coordinate parsing
         const formattedFilms = filmsData.map(film => {
-          // Parse the PostGIS point data
-          let coordinates = { lat: 0, lng: 0 };
+          // Initialize default coordinates (avoid 0,0 which is in the ocean)
+          let coordinates = { lat: null, lng: null };
           
+          // Debug: Log the original coordinates format for this film
+          console.log(`Film "${film.title}" coordinates format:`, typeof film.coordinates, film.coordinates);
+          
+          // Case 1: PostGIS string format 'POINT(lng lat)'
           if (typeof film.coordinates === 'string') {
-            // Handle if stored as string like 'POINT(lng lat)'
-            const match = film.coordinates.match(/POINT\(([^ ]+) ([^ ]+)\)/);
-            if (match) {
-              coordinates = { lng: parseFloat(match[1]), lat: parseFloat(match[2]) };
+            // Try the standard PostGIS format first
+            const pointMatch = film.coordinates.match(/POINT\(([+-]?\d+(\.\d+)?) ([+-]?\d+(\.\d+)?)\)/);
+            if (pointMatch) {
+              coordinates = { 
+                lng: parseFloat(pointMatch[1]), 
+                lat: parseFloat(pointMatch[3])  // Note: capturing group 3 here, not 2
+              };
+              console.log(`Parsed from POINT string: lng=${coordinates.lng}, lat=${coordinates.lat}`);
+            } 
+            // Try alternative format with comma separator
+            else {
+              const commaMatch = film.coordinates.match(/\(?([+-]?\d+(\.\d+)?),\s*([+-]?\d+(\.\d+)?)\)?/);
+              if (commaMatch) {
+                coordinates = { 
+                  lng: parseFloat(commaMatch[1]), 
+                  lat: parseFloat(commaMatch[3]) 
+                };
+                console.log(`Parsed from comma-separated: lng=${coordinates.lng}, lat=${coordinates.lat}`);
+              }
             }
-          } else if (film.coordinates && film.coordinates.coordinates) {
-            // Handle GeoJSON format
+          } 
+          // Case 2: GeoJSON format with nested coordinates array
+          else if (film.coordinates && Array.isArray(film.coordinates.coordinates)) {
             coordinates = { 
               lng: film.coordinates.coordinates[0], 
               lat: film.coordinates.coordinates[1] 
             };
+            console.log(`Parsed from GeoJSON: lng=${coordinates.lng}, lat=${coordinates.lat}`);
           }
+          // Case 3: Direct object with lat/lng or coordinates property
+          else if (film.coordinates && typeof film.coordinates === 'object') {
+            // Try different property naming schemes
+            if (film.coordinates.lat !== undefined && film.coordinates.lng !== undefined) {
+              coordinates = { 
+                lat: film.coordinates.lat, 
+                lng: film.coordinates.lng 
+              };
+              console.log(`Parsed from direct lat/lng object: lng=${coordinates.lng}, lat=${coordinates.lat}`);
+            }
+            else if (film.coordinates.latitude !== undefined && film.coordinates.longitude !== undefined) {
+              coordinates = { 
+                lat: film.coordinates.latitude, 
+                lng: film.coordinates.longitude 
+              };
+              console.log(`Parsed from latitude/longitude object: lng=${coordinates.lng}, lat=${coordinates.lat}`);
+            }
+            // Try PostgreSQL specific format which might be serialized
+            else if (film.coordinates.value || film.coordinates.srid) {
+              const pgValue = film.coordinates.value || '';
+              const valueMatch = pgValue.match(/\(?([+-]?\d+(\.\d+)?),\s*([+-]?\d+(\.\d+)?)\)?/);
+              if (valueMatch) {
+                coordinates = { 
+                  lng: parseFloat(valueMatch[1]), 
+                  lat: parseFloat(valueMatch[3]) 
+                };
+                console.log(`Parsed from PostgreSQL value: lng=${coordinates.lng}, lat=${coordinates.lat}`);
+              }
+            }
+          }
+          
+          // Fallback: If coordinates are still null, set to a default (but meaningful) location
+          // or keep the original coordinates if they exist
+          if (coordinates.lat === null || coordinates.lng === null || 
+              isNaN(coordinates.lat) || isNaN(coordinates.lng)) {
+            console.warn(`Failed to parse coordinates for film "${film.title}"`);
+            
+            // Option 1: Keep any non-null coordinates we have
+            if (film.coordinates && 
+                typeof film.coordinates === 'object' && 
+                film.coordinates.lat !== undefined && 
+                film.coordinates.lng !== undefined) {
+              coordinates = film.coordinates;
+            } 
+            // Option 2: Use a default position that's not 0,0
+            else {
+              // Set to a default position that's not in the ocean - perhaps the center of the map
+              coordinates = { lat: 40, lng: -30 }; // Default to somewhere in the Atlantic
+            }
+          }
+          
+          // Final validation to ensure we have valid numbers
+          coordinates.lat = parseFloat(coordinates.lat);
+          coordinates.lng = parseFloat(coordinates.lng);
+          
+          // Debug: Log the final parsed coordinates
+          console.log(`Final coordinates for "${film.title}": lng=${coordinates.lng}, lat=${coordinates.lat}`);
           
           return {
             ...film,
@@ -83,8 +208,7 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
       } finally {
         setLoading(false);
       }
-    };
-
+    };    
     fetchFilms();
   }, []);
 
@@ -293,12 +417,41 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
       console.log("Map not ready for data update, will try again later");
       return;
     }
-
+  
     try {
       console.log("Updating map data with films:", films.length);
+      
+      // First validate all coordinates to ensure they're valid
+      const validFilms = films.filter(film => {
+        // Skip films without valid coordinates
+        const hasValidCoords = film.coordinates && 
+                              typeof film.coordinates.lat === 'number' && 
+                              typeof film.coordinates.lng === 'number' &&
+                              !isNaN(film.coordinates.lat) && 
+                              !isNaN(film.coordinates.lng);
+                              
+        if (!hasValidCoords) {
+          console.warn(`Film "${film.title}" has invalid coordinates:`, film.coordinates);
+        }
+        
+        // Skip films at 0,0 coordinates (likely parsing errors)
+        const isAtOrigin = film.coordinates && 
+                            film.coordinates.lat === 0 && 
+                            film.coordinates.lng === 0;
+                            
+        if (isAtOrigin) {
+          console.warn(`Film "${film.title}" is at 0,0 coordinates, likely an error`);
+        }
+        
+        return hasValidCoords && !isAtOrigin;
+      });
+      
+      console.log(`Found ${validFilms.length} films with valid coordinates out of ${films.length} total`);
+      
+      // Create GeoJSON feature collection with only valid coordinates
       const geojson = {
         type: 'FeatureCollection',
-        features: films.map(film => ({
+        features: validFilms.map(film => ({
           type: 'Feature',
           geometry: {
             type: 'Point',
@@ -313,9 +466,10 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
           }
         }))
       };
-
+  
       const source = map.current.getSource('films');
       if (source) {
+        console.log("Updating films source with", geojson.features.length, "features");
         source.setData(geojson);
       } else {
         console.warn("Films source not found on map");
@@ -324,13 +478,7 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
       console.error("Error updating map data:", error);
     }
   };
-
-  // Update map data when films change and map is loaded
-  useEffect(() => {
-    if (mapLoaded && films.length > 0) {
-      updateMapData();
-    }
-  }, [films, mapLoaded]);
+  
 
   // Function to search for locations
   const handleSearch = async (query) => {
@@ -356,12 +504,29 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
   };
 
   // Function to reverse geocode coordinates to a place name
+  // Enhanced reverseGeocode function with validation and error handling
   const reverseGeocode = async (lng, lat) => {
     try {
-      const response = await fetch(`/api/geocode?query=${lat},${lng}`);
+      // Validate coordinates (longitude: -180 to 180, latitude: -90 to 90)
+      if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+        console.warn('Invalid coordinates:', lng, lat);
+        return `Location at ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+      }
+      
+      // Format coordinates properly - Mapbox expects "longitude,latitude"
+      const formattedCoords = `${lng.toFixed(6)},${lat.toFixed(6)}`;
+      
+      console.log('Geocoding request for coordinates:', formattedCoords);
+      
+      const response = await fetch(`/api/geocode?query=${encodeURIComponent(formattedCoords)}`);
+      
+      // Log the response status for debugging
+      console.log('Geocoding response status:', response.status);
       
       if (!response.ok) {
-        throw new Error(`Reverse geocoding request failed with status ${response.status}`);
+        console.error(`Geocoding error: Status ${response.status}`);
+        // Return a fallback instead of throwing
+        return `Location at ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
       }
       
       const data = await response.json();
@@ -369,10 +534,13 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
       if (data.features && data.features.length > 0) {
         return data.features[0].place_name;
       }
-      return null;
+      
+      // Fallback if no features found
+      return `Location at ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
     } catch (error) {
       console.error('Reverse geocoding error:', error);
-      return null;
+      // Return a fallback value instead of failing
+      return `Location at ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
     }
   };
 
@@ -507,7 +675,41 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
     }
   }, [user]);
 
-  // Add this to your QueerFilmsMap component
+  useEffect(() => {
+    debugCoordinatesFormat();
+  }, []);
+
+  // A function to ensure consistent coordinate parsing
+  const parseCoordinates = (coordinatesData) => {
+    // Default coordinates (you might want to choose a different default)
+    let lng = 0, lat = 0;
+    
+    // Case 1: Already in the correct format
+    if (coordinatesData && typeof coordinatesData === 'object' && 'lng' in coordinatesData && 'lat' in coordinatesData) {
+      return coordinatesData;
+    }
+    
+    // Case 2: String format like 'POINT(lng lat)'
+    if (typeof coordinatesData === 'string') {
+      const match = coordinatesData.match(/POINT\(([^ ]+) ([^ ]+)\)/);
+      if (match) {
+        lng = parseFloat(match[1]);
+        lat = parseFloat(match[2]);
+        return { lng, lat };
+      }
+    }
+    
+    // Case 3: GeoJSON format
+    if (coordinatesData && coordinatesData.coordinates && Array.isArray(coordinatesData.coordinates)) {
+      lng = coordinatesData.coordinates[0];
+      lat = coordinatesData.coordinates[1];
+      return { lng, lat };
+    }
+    
+    // Return default if nothing else worked
+    return { lng, lat };
+  };
+
   useEffect(() => {
     const checkAuth = async () => {
       try {

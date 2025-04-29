@@ -1,9 +1,7 @@
 'use client';
-
-import { useEffect, useState, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import mapboxgl from 'mapbox-gl';
-import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { ArrowLeft, MapPin, Calendar, User, Clock, Loader2 } from 'lucide-react';
@@ -13,78 +11,17 @@ import Link from 'next/link';
 // Set Mapbox token
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
-export default function FilmPage({ params }) {
-  const { id } = params;
-  const [film, setFilm] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [author, setAuthor] = useState(null);
+export default function FilmDetailClient({ film, author, error }) {
+  // Notice we no longer have useState for film, author, or error
+  // They come directly as props from the server component
+  
   const mapContainer = useRef(null);
   const map = useRef(null);
   const { user } = useAuth();
   const router = useRouter();
-
-  // Fetch film data
-  useEffect(() => {
-    const fetchFilm = async () => {
-      try {
-        setLoading(true);
-        const supabase = createClient();
-        
-        // Fetch film with id
-        const { data: filmData, error: filmError } = await supabase
-          .from('films')
-          .select('*')
-          .eq('id', id)
-          .single();
-        
-        if (filmError) throw filmError;
-        if (!filmData) throw new Error('Film not found');
-        
-        // Parse coordinates
-        let coordinates = { lat: 0, lng: 0 };
-        if (typeof filmData.coordinates === 'string') {
-          // Handle if stored as string like 'POINT(lng lat)'
-          const match = filmData.coordinates.match(/POINT\(([^ ]+) ([^ ]+)\)/);
-          if (match) {
-            coordinates = { lng: parseFloat(match[1]), lat: parseFloat(match[2]) };
-          }
-        } else if (filmData.coordinates && filmData.coordinates.coordinates) {
-          // Handle GeoJSON format
-          coordinates = { 
-            lng: filmData.coordinates.coordinates[0], 
-            lat: filmData.coordinates.coordinates[1] 
-          };
-        }
-        
-        setFilm({
-          ...filmData,
-          coordinates
-        });
-        
-        // Fetch author profile
-        const { data: authorData, error: authorError } = await supabase
-          .from('profiles')
-          .select('username, full_name, avatar_url')
-          .eq('id', filmData.user_id)
-          .single();
-          
-        if (!authorError && authorData) {
-          setAuthor(authorData);
-        }
-        
-      } catch (err) {
-        console.error('Error fetching film:', err);
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    if (id) {
-      fetchFilm();
-    }
-  }, [id]);
+  
+  // We still need loading state for client-side operations
+  const [loading, setLoading] = useState(false);
 
   // Initialize map once film data is loaded
   useEffect(() => {
@@ -114,7 +51,8 @@ export default function FilmPage({ params }) {
     };
   }, [film]);
 
-  if (loading) {
+  // Convert the loading screen UI to use our prop-based approach
+  if (!film && !error) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -123,6 +61,7 @@ export default function FilmPage({ params }) {
     );
   }
 
+  // Error handling directly uses the error prop
   if (error) {
     return (
       <div className="container mx-auto py-8 px-4">
@@ -143,10 +82,7 @@ export default function FilmPage({ params }) {
     );
   }
 
-  if (!film) {
-    return null;
-  }
-
+  // Helper function for date formatting
   const formatDate = (dateString) => {
     if (!dateString) return 'Unknown';
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -156,6 +92,8 @@ export default function FilmPage({ params }) {
     });
   };
 
+  // The rest of your component remains largely the same,
+  // but uses the props directly instead of state
   return (
     <div className="container mx-auto py-8 px-4">
       <Button
