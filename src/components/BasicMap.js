@@ -3,7 +3,7 @@ import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
 // Don't forget to replace this with your actual token
-mapboxgl.accessToken = 'pk.eyJ1IjoiamltcmFldGgiLCJhIjoiY203M3ppazIzMDR1bjJycHg2eXNueXUwZSJ9.mH29QT02-7Egh9TTW3dnog';
+mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
 const BasicMap = () => {
   const mapContainer = useRef(null);

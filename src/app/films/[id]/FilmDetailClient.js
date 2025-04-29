@@ -32,21 +32,24 @@ export default function FilmDetailClient({ film, author, error }) {
       interactive: true
     });
     
-    // Add navigation control
-    map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
-    
-    // Add marker for the film location
-    new mapboxgl.Marker({ color: '#ff69b4' })
-      .setLngLat([film.coordinates.lng, film.coordinates.lat])
-      .addTo(map.current);
+    // Wait for map to load before adding marker
+    map.current.on('load', () => {
+      // Add navigation control
+      map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
       
+      // Add marker for the film location
+      new mapboxgl.Marker({ color: '#ff69b4' })
+        .setLngLat([film.coordinates.lng, film.coordinates.lat])
+        .addTo(map.current);
+    });
+        
     return () => {
       if (map.current) {
         map.current.remove();
         map.current = null;
       }
     };
-  }, [film]);
+  }, [film]);  
 
   // Convert the loading screen UI to use our prop-based approach
   if (!film && !error) {

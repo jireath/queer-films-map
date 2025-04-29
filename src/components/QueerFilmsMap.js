@@ -118,6 +118,12 @@ function debugCoordinatesFormat() {
     });
 }
 
+const logCoordinateFormat = (film) => {
+  console.log(`Film "${film.title}" coordinates:`, film.coordinates);
+  console.log('Type:', typeof film.coordinates);
+  console.log('Format:', film.coordinates ? Object.keys(film.coordinates).join(', ') : 'null');
+};
+
 const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
   const mapContainer = useRef(null);
   const map = useRef(null);
@@ -291,7 +297,7 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
       });
 
       map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
-      
+
       // Set flag to avoid re-initialization
       mapInitializedRef.current = true;
 
@@ -299,18 +305,19 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
       map.current.on('load', () => {
         console.log("Map loaded, adding data layers...");
         setMapLoaded(true);
-        
-        // Add a source for film points that will be clustered
-        map.current.addSource('films', {
-          type: 'geojson',
-          data: {
-            type: 'FeatureCollection',
-            features: []
-          },
-          cluster: true,
-          clusterMaxZoom: 14,
-          clusterRadius: 50
-        });
+        // Check if source already exists (avoid duplicate sources)
+        if (!map.current.getSource('films')) {
+          // Add a source for film points that will be clustered
+          map.current.addSource('films', {
+            type: 'geojson',
+            data: {
+              type: 'FeatureCollection',
+              features: []
+            },
+            cluster: true,
+            clusterMaxZoom: 14,
+            clusterRadius: 50
+          })};
 
         // Add cluster circles
         map.current.addLayer({
@@ -477,11 +484,13 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
 
   // Update map data when films change
   const updateMapData = () => {
+    // If map or style isn't loaded yet, retry after a short delay
     if (!map.current || !map.current.isStyleLoaded()) {
-      console.log("Map not ready for data update, will try again later");
+      console.log("Map not ready for data update, will retry in 500ms");
+      setTimeout(updateMapData, 500);
       return;
     }
-  
+
     try {
       console.log("Updating map data with films:", films.length);
       
@@ -737,6 +746,14 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
       resetState();
     }
   }, [readOnly]);
+
+  // Update map data whenever films change
+  useEffect(() => {
+    if (films.length > 0 && mapLoaded) {
+      console.log('Films changed, updating map data...');
+      updateMapData();
+    }
+  }, [films, mapLoaded]);
 
   useEffect(() => {
     if (user) {
