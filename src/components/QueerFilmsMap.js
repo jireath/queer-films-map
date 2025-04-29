@@ -1,17 +1,78 @@
+'use client';
+
 import React, { useState, useEffect, useRef } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { MapPin, Plus, X, Search, Loader2, Info } from 'lucide-react';
+import { MapPin, Plus, X, Search, Loader2, Info, Video } from 'lucide-react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useAuth } from '@/contexts/AuthContext';
-import { getAllApprovedFilms, addFilm } from '@/lib/services/filmService';
+import { getAllApprovedFilms, addFilm, uploadFilmImage } from '@/lib/services/filmService';
 import { createClient } from '@/lib/supabase/client';
 import Link from 'next/link';
+import ImageUpload from '@/components/ImageUpload';
 
 // Replace with your actual token
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
+
+// Modal component defined inline for easier copy-paste
+const Modal = ({ isOpen, onClose, title, children }) => {
+  const modalRef = useRef(null);
+
+  // Close when clicking outside the modal content
+  useEffect(() => {
+    const handleOutsideClick = (event) => {
+      if (modalRef.current && !modalRef.current.contains(event.target)) {
+        onClose();
+      }
+    };
+
+    // Close on escape key press
+    const handleEscapeKey = (event) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    if (isOpen) {
+      document.addEventListener('mousedown', handleOutsideClick);
+      document.addEventListener('keydown', handleEscapeKey);
+      // Prevent scrolling on the body when modal is open
+      document.body.style.overflow = 'hidden';
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleEscapeKey);
+      document.body.style.overflow = 'auto';
+    };
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div 
+        ref={modalRef}
+        className="bg-card border border-border rounded-lg shadow-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+      >
+        {/* Modal header */}
+        <div className="flex items-center justify-between p-4 border-b border-border">
+          <h2 className="text-xl font-semibold">{title}</h2>
+          <Button variant="ghost" size="icon" onClick={onClose}>
+            <X className="h-5 w-5" />
+          </Button>
+        </div>
+        
+        {/* Modal content */}
+        <div className="p-6">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 function debugCoordinatesFormat() {
   // Get a supabase client
@@ -76,12 +137,14 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [films, setFilms] = useState([]);
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [selectedFilm, setSelectedFilm] = useState(null);
+  const [imageFile, setImageFile] = useState(null);
   
   const [newFilm, setNewFilm] = useState({
     title: '',
+    director: '',
     location: '',
     year: '',
     description: ''
@@ -228,7 +291,7 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
       });
 
       map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
-
+      
       // Set flag to avoid re-initialization
       mapInitializedRef.current = true;
 
@@ -386,7 +449,8 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
           lng: e.lngLat.lng,
           lat: e.lngLat.lat
         });
-        setShowAddForm(true);
+        
+        setShowAddModal(true);
       });
 
       // Change cursor on hover
@@ -586,9 +650,16 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
         return;
       }
       
+      // Upload image if provided
+      let imageUrl = null;
+      if (imageFile) {
+        imageUrl = await uploadFilmImage(imageFile);
+      }
+      
       // Prepare film data with absolute certainty about the user ID
       const filmData = {
         title: newFilm.title || "Untitled Film",
+        director: newFilm.director || null,
         location: newFilm.location || `Location at ${selectedLocation.lat.toFixed(4)}, ${selectedLocation.lng.toFixed(4)}`,
         // Store PostGIS point data - ensure correct formatting
         coordinates: `POINT(${selectedLocation.lng} ${selectedLocation.lat})`,
@@ -596,7 +667,8 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
         description: newFilm.description || "No description provided",
         // Use the ID directly from the session
         user_id: sessionData.session.user.id,
-        status: 'pending' // New films are pending until approved
+        status: 'pending', // New films are pending until approved
+        image_url: imageUrl
       };
       
       console.log('Film data being submitted:', filmData);
@@ -617,9 +689,10 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
       setFilms(prevFilms => [...prevFilms, newFilmForState]);
       
       // Reset form
-      setNewFilm({ title: '', location: '', year: '', description: '' });
+      setNewFilm({ title: '', director: '', location: '', year: '', description: '' });
       setSelectedLocation(null);
-      setShowAddForm(false);
+      setImageFile(null);
+      setShowAddModal(false);
       
       // Remove temporary marker
       if (window.tempMarker) {
@@ -647,11 +720,10 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
       setSubmitting(false);
     }
   };
-  
 
   // Function to handle logging out and resetting form state
   const resetState = () => {
-    setShowAddForm(false);
+    setShowAddModal(false);
     setSelectedLocation(null);
     if (window.tempMarker) {
       window.tempMarker.remove();
@@ -771,7 +843,7 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
               <span>Queer Films Archive</span>
               {!readOnly && (
                 <Button 
-                  onClick={() => setShowAddForm(!showAddForm)}
+                  onClick={() => setShowAddModal(true)}
                   className="flex items-center gap-2"
                 >
                   <Plus className="h-4 w-4" />
@@ -825,68 +897,94 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
         </Card>
       </div>
 
-      {/* Add film form */}
-      {showAddForm && (
-        <Card className="absolute top-48 left-4 z-10 w-96">
-          <CardHeader>
-            <CardTitle className="flex justify-between items-center">
-              <span>Add New Film</span>
+      {/* Add Film Modal Dialog */}
+      <Modal 
+        isOpen={showAddModal} 
+        onClose={() => {
+          setShowAddModal(false);
+          setSelectedLocation(null);
+          setImageFile(null);
+          if (window.tempMarker) {
+            window.tempMarker.remove();
+          }
+        }}
+        title="Add New Film"
+      >
+        <div className="space-y-4">
+          <p className="text-muted-foreground">
+            Your submission will be reviewed before being added to the public archive.
+          </p>
+          
+          <form onSubmit={handleAddFilm} className="space-y-4">
+            <Input
+              placeholder="Film Title"
+              value={newFilm.title}
+              onChange={(e) => setNewFilm({...newFilm, title: e.target.value})}
+              required
+            />
+            
+            <Input
+              placeholder="Director"
+              value={newFilm.director}
+              onChange={(e) => setNewFilm({...newFilm, director: e.target.value})}
+            />
+            
+            <Input
+              placeholder="Location"
+              value={newFilm.location}
+              onChange={(e) => setNewFilm({...newFilm, location: e.target.value})}
+              required
+            />
+            
+            <Input
+              placeholder="Year"
+              type="number"
+              min="1895"
+              max={new Date().getFullYear()}
+              value={newFilm.year}
+              onChange={(e) => setNewFilm({...newFilm, year: e.target.value})}
+              required
+            />
+            
+            <div>
+              <label className="block text-sm font-medium mb-2">Description</label>
+              <textarea
+                placeholder="Describe the film and its significance to queer cinema"
+                value={newFilm.description}
+                onChange={(e) => setNewFilm({...newFilm, description: e.target.value})}
+                required
+                className="w-full h-24 rounded-md border border-input bg-transparent px-3 py-2 text-sm"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <label className="block text-sm font-medium mb-2">Film Image</label>
+              <ImageUpload 
+                onImageChange={(file) => setImageFile(file)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Upload a still image, poster, or other visual representation of the film
+              </p>
+            </div>
+            
+            <div className="flex justify-end gap-2 pt-4">
               <Button 
-                variant="ghost" 
-                size="icon"
+                type="button" 
+                variant="outline"
                 onClick={() => {
-                  setShowAddForm(false);
+                  setShowAddModal(false);
                   setSelectedLocation(null);
+                  setImageFile(null);
                   if (window.tempMarker) {
                     window.tempMarker.remove();
                   }
                 }}
               >
-                <X className="h-4 w-4" />
+                Cancel
               </Button>
-            </CardTitle>
-            <CardDescription>
-              Your submission will be reviewed before being added to the public archive.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleAddFilm} className="space-y-4">
-              <Input
-                placeholder="Film Title"
-                value={newFilm.title}
-                onChange={(e) => setNewFilm({...newFilm, title: e.target.value})}
-                required
-              />
-              <Input
-                placeholder="Location"
-                value={newFilm.location}
-                onChange={(e) => setNewFilm({...newFilm, location: e.target.value})}
-                required
-              />
-              <Input
-                placeholder="Year"
-                type="number"
-                min="1895"
-                max={new Date().getFullYear()}
-                value={newFilm.year}
-                onChange={(e) => setNewFilm({...newFilm, year: e.target.value})}
-                required
-              />
-              <div>
-                <Input
-                  placeholder="Description"
-                  value={newFilm.description}
-                  onChange={(e) => setNewFilm({...newFilm, description: e.target.value})}
-                  required
-                  className="h-20"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Briefly describe the film and its significance to queer cinema.
-                </p>
-              </div>
+              
               <Button 
                 type="submit" 
-                className="w-full"
                 disabled={submitting}
               >
                 {submitting ? (
@@ -896,10 +994,10 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
                   </>
                 ) : 'Submit Film'}
               </Button>
-            </form>
-          </CardContent>
-        </Card>
-      )}
+            </div>
+          </form>
+        </div>
+      </Modal>
       
       {/* Film details panel (when a film is selected) */}
       {selectedFilm && (
@@ -917,9 +1015,24 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
             </CardTitle>
             <CardDescription>
               {selectedFilm.location}
+              {selectedFilm.director && (
+                <div className="flex items-center mt-1">
+                  <Video className="h-4 w-4 mr-1" />
+                  <span>Directed by {selectedFilm.director}</span>
+                </div>
+              )}
             </CardDescription>
           </CardHeader>
           <CardContent>
+            {selectedFilm.image_url && (
+              <div className="w-full mb-4 overflow-hidden rounded-md">
+                <img 
+                  src={selectedFilm.image_url} 
+                  alt={selectedFilm.title}
+                  className="w-full h-auto object-cover"
+                />
+              </div>
+            )}
             <p className="mb-4">{selectedFilm.description}</p>
             <Link href={`/films/${selectedFilm.id}`} passHref>
               <Button variant="outline" className="w-full">

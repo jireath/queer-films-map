@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { MapPin, Calendar, Search, Film, Loader2 } from 'lucide-react';
+import { MapPin, Calendar, Search, Film, Loader2, Video } from 'lucide-react';
 import { getAllApprovedFilms } from '@/lib/services/filmService';
 import Link from 'next/link';
 
@@ -79,7 +79,7 @@ export default function FilmsPage() {
         <div>
           <h1 className="text-3xl font-bold mb-2">Queer Films Archive</h1>
           <p className="text-muted-foreground">
-            Explore our collection of {films.length} films in queer cinema history
+            Explore our growing collection of {films.length} films in queer cinema.
           </p>
         </div>
         
@@ -209,17 +209,36 @@ export default function FilmsPage() {
                           className="block transition-all hover:scale-[1.02]"
                         >
                           <Card className="h-full overflow-hidden hover:shadow-md transition-shadow">
+                            {/* Image preview if available */}
+                            {film.image_url && (
+                              <div className="w-full h-36 overflow-hidden">
+                                <img 
+                                  src={film.image_url} 
+                                  alt={film.title}
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                            )}
+                            
                             <CardHeader className="pb-2">
                               <CardTitle>{film.title}</CardTitle>
-                              <CardDescription className="flex items-center gap-4">
+                              <CardDescription className="flex flex-wrap items-center gap-4">
                                 <div className="flex items-center">
                                   <Calendar className="h-4 w-4 mr-1" />
                                   <span>{film.year}</span>
                                 </div>
+                                
                                 <div className="flex items-center">
                                   <MapPin className="h-4 w-4 mr-1" />
                                   <span>{film.location}</span>
                                 </div>
+                                
+                                {film.director && (
+                                  <div className="flex items-center">
+                                    <Video className="h-4 w-4 mr-1" />
+                                    <span>{film.director}</span>
+                                  </div>
+                                )}
                               </CardDescription>
                             </CardHeader>
                             <CardContent>

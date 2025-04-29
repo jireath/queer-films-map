@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import mapboxgl from 'mapbox-gl';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, MapPin, Calendar, User, Clock, Loader2 } from 'lucide-react';
+import { ArrowLeft, MapPin, Calendar, User, Clock, Loader2, Video } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import Link from 'next/link';
 
@@ -12,9 +12,6 @@ import Link from 'next/link';
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
 export default function FilmDetailClient({ film, author, error }) {
-  // Notice we no longer have useState for film, author, or error
-  // They come directly as props from the server component
-  
   const mapContainer = useRef(null);
   const map = useRef(null);
   const { user } = useAuth();
@@ -92,8 +89,6 @@ export default function FilmDetailClient({ film, author, error }) {
     });
   };
 
-  // The rest of your component remains largely the same,
-  // but uses the props directly instead of state
   return (
     <div className="container mx-auto py-8 px-4">
       <Button
@@ -107,13 +102,30 @@ export default function FilmDetailClient({ film, author, error }) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Main content */}
         <div className="md:col-span-2 space-y-6">
+          {/* Film image - shown if available */}
+          {film.image_url && (
+            <div className="w-full overflow-hidden rounded-lg border border-border">
+              <img 
+                src={film.image_url} 
+                alt={`Image for ${film.title}`}
+                className="w-full h-auto object-cover aspect-video"
+              />
+            </div>
+          )}
+
           <Card>
             <CardHeader>
               <CardTitle className="text-3xl">{film.title}</CardTitle>
-              <CardDescription className="flex items-center gap-2">
+              <CardDescription className="flex flex-wrap items-center gap-2">
                 <Calendar className="h-4 w-4" /> {film.year}
                 <span className="mx-2">•</span>
                 <MapPin className="h-4 w-4" /> {film.location}
+                {film.director && (
+                  <>
+                    <span className="mx-2">•</span>
+                    <Video className="h-4 w-4" /> Directed by {film.director}
+                  </>
+                )}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -148,7 +160,9 @@ export default function FilmDetailClient({ film, author, error }) {
               </CardHeader>
               <CardContent>
                 <div className="flex flex-wrap gap-4">
-                  <Button variant="outline">Edit Details</Button>
+                  <Link href={`/films/${film.id}/edit`} passHref>
+                    <Button variant="outline">Edit Details</Button>
+                  </Link>
                   <Button variant="destructive">Delete Submission</Button>
                 </div>
               </CardContent>

@@ -1,3 +1,4 @@
+// src/lib/services/filmService.js
 import { createClient } from '@/lib/supabase/client';
 
 export async function getAllApprovedFilms() {
@@ -5,7 +6,7 @@ export async function getAllApprovedFilms() {
   
   const { data, error } = await supabase
     .from('films')
-    .select('id, title, location, coordinates, year, description, user_id, created_at')
+    .select('id, title, location, coordinates, year, description, director, image_url, user_id, created_at')
     .eq('status', 'approved');
     
   if (error) throw error;
@@ -17,7 +18,7 @@ export async function getUserFilms(userId) {
   
   const { data, error } = await supabase
     .from('films')
-    .select('id, title, location, coordinates, year, description, status, rejection_reason, created_at')
+    .select('id, title, location, coordinates, year, description, director, image_url, status, rejection_reason, created_at')
     .eq('user_id', userId);
     
   if (error) throw error;
@@ -111,7 +112,7 @@ export async function deleteFilm(id) {
     // Get the film to check ownership
     const { data: filmData, error: filmError } = await supabase
       .from('films')
-      .select('user_id')
+      .select('user_id, image_url')
       .eq('id', id)
       .single();
       
@@ -142,6 +143,28 @@ export async function deleteFilm(id) {
       throw new Error('You do not have permission to delete this film');
     }
     
+    // Delete the image from storage if it exists
+    if (filmData.image_url) {
+      try {
+        // Extract the path from the URL
+        const urlParts = filmData.image_url.split('/');
+        const filePath = urlParts[urlParts.length - 1];
+        
+        const { error: storageError } = await supabase
+          .storage
+          .from('film-images')
+          .remove([filePath]);
+          
+        if (storageError) {
+          console.error('Error deleting image file:', storageError);
+          // Continue with deletion even if image removal fails
+        }
+      } catch (err) {
+        console.error('Error processing image deletion:', err);
+        // Continue with film deletion anyway
+      }
+    }
+    
     // Proceed with deletion
     const { error: deleteError } = await supabase
       .from('films')
@@ -157,6 +180,43 @@ export async function deleteFilm(id) {
     return true;
   } catch (error) {
     console.error('Error in deleteFilm:', error);
+    throw error;
+  }
+}
+
+/**
+ * Upload a film image to Supabase Storage
+ */
+export async function uploadFilmImage(file) {
+  try {
+    if (!file) return null;
+    
+    const supabase = createClient();
+    
+    // Generate a unique filename
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${Date.now()}.${fileExt}`;
+    
+    // Upload the file
+    const { data, error } = await supabase
+      .storage
+      .from('film-images')
+      .upload(fileName, file, {
+        cacheControl: '3600',
+        upsert: false
+      });
+      
+    if (error) throw error;
+    
+    // Get the public URL
+    const { data: { publicUrl } } = supabase
+      .storage
+      .from('film-images')
+      .getPublicUrl(data.path);
+    
+    return publicUrl;
+  } catch (error) {
+    console.error('Error uploading image:', error);
     throw error;
   }
 }

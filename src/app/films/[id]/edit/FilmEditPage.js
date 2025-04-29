@@ -9,8 +9,9 @@ import { Input } from '@/components/ui/input';
 import { ArrowLeft, Loader2, Save, MapPin } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
-import { updateFilm } from '@/lib/services/filmService';
+import { updateFilm, uploadFilmImage } from '@/lib/services/filmService';
 import Link from 'next/link';
+import ImageUpload from '@/components/ImageUpload';
 
 // Set Mapbox token
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
@@ -21,10 +22,12 @@ export default function EditFilmPage({ params }) {
   const [film, setFilm] = useState(null);
   const [formData, setFormData] = useState({
     title: '',
+    director: '',
     location: '',
     year: '',
     description: ''
   });
+  const [imageFile, setImageFile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -95,6 +98,7 @@ export default function EditFilmPage({ params }) {
         setFilm(formattedFilm);
         setFormData({
           title: formattedFilm.title || '',
+          director: formattedFilm.director || '',
           location: formattedFilm.location || '',
           year: formattedFilm.year?.toString() || '',
           description: formattedFilm.description || ''
@@ -193,6 +197,11 @@ export default function EditFilmPage({ params }) {
     }));
   };
 
+  // Handle image upload
+  const handleImageChange = (file) => {
+    setImageFile(file);
+  };
+
   // Function to reverse geocode coordinates to a place name
   const reverseGeocode = async (lng, lat) => {
     try {
@@ -223,13 +232,21 @@ export default function EditFilmPage({ params }) {
     try {
       setSubmitting(true);
       
+      // First upload the image if provided
+      let imageUrl = film.image_url;
+      if (imageFile) {
+        imageUrl = await uploadFilmImage(imageFile);
+      }
+      
       // Prepare film data for submission
       const filmData = {
         title: formData.title,
+        director: formData.director,
         location: formData.location,
         coordinates: `POINT(${selectedLocation.lng} ${selectedLocation.lat})`,
         year: parseInt(formData.year, 10),
-        description: formData.description
+        description: formData.description,
+        image_url: imageUrl
       };
       
       // Update in database
@@ -322,6 +339,17 @@ export default function EditFilmPage({ params }) {
                 </div>
                 
                 <div className="space-y-2">
+                  <label htmlFor="director" className="text-sm font-medium">Director</label>
+                  <Input
+                    id="director"
+                    name="director"
+                    value={formData.director}
+                    onChange={handleChange}
+                    placeholder="Enter the film director's name"
+                  />
+                </div>
+                
+                <div className="space-y-2">
                   <label htmlFor="location" className="text-sm font-medium">
                     Location
                     <span className="text-muted-foreground ml-2 text-xs">
@@ -381,6 +409,17 @@ export default function EditFilmPage({ params }) {
                   />
                   <p className="text-xs text-muted-foreground">
                     Describe the film and explain its significance in queer cinema history
+                  </p>
+                </div>
+                
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Film Image</label>
+                  <ImageUpload 
+                    onImageChange={handleImageChange} 
+                    existingImageUrl={film.image_url}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Upload a still image, poster, or other visual representation of the film
                   </p>
                 </div>
               </form>
