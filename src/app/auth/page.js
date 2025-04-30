@@ -1,9 +1,9 @@
+// src/app/auth/page.js
 'use client';
 
 import React, { useState } from 'react';
 import SignInForm from '@/app/auth/SignInForm';
 import SignUpForm from '@/app/auth/SignUpForm';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
 export default function AuthPage() {
@@ -11,8 +11,16 @@ export default function AuthPage() {
   const [authMode, setAuthMode] = useState('signin');
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-muted flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-md space-y-6">
+    <div 
+      className="min-h-screen flex flex-col items-center justify-center p-4 relative"
+      style={{
+        backgroundImage: "url('/topographic-bg.png')",
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat"
+      }}
+    >
+      <div className="w-full max-w-md space-y-6 z-10">
         {/* Title and description section */}
         <div className="text-center space-y-2">
           <h1 className="text-3xl font-bold">Queer Films Archive</h1>

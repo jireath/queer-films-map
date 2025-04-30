@@ -990,8 +990,8 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
       
       {/* Film details panel (when a film is selected) */}
       {selectedFilm && (
-        <Card className="absolute bottom-4 right-4 z-10 w-96">
-          <CardHeader>
+        <Card className="absolute bottom-4 right-4 z-10 w-72">
+          <CardHeader className="pb-2">
             <CardTitle className="flex justify-between items-center">
               <span>{selectedFilm.title} ({selectedFilm.year})</span>
               <Button 
@@ -1003,29 +1003,31 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
               </Button>
             </CardTitle>
             <CardDescription>
-              {selectedFilm.location}
+              <div className="flex items-center gap-1 mb-1">
+                <MapPin className="h-4 w-4" />
+                <span>{selectedFilm.location}</span>
+              </div>
               {selectedFilm.director && (
-                <div className="flex items-center mt-1">
-                  <Video className="h-4 w-4 mr-1" />
-                  <span>Directed by {selectedFilm.director}</span>
+                <div className="flex items-center gap-1">
+                  <Video className="h-4 w-4" />
+                  <span>{selectedFilm.director}</span>
                 </div>
               )}
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="pt-0 pb-3">
             {selectedFilm.image_url && (
-              <div className="w-full mb-4 overflow-hidden rounded-md">
+              <div className="w-full mb-3 overflow-hidden rounded-md h-32">
                 <img 
                   src={selectedFilm.image_url} 
                   alt={selectedFilm.title}
-                  className="w-full h-auto object-cover"
+                  className="w-full h-full object-cover"
                 />
               </div>
             )}
-            <p className="mb-4">{selectedFilm.description}</p>
             <Link href={`/films/${selectedFilm.id}`} passHref>
               <Button variant="outline" className="w-full">
-                View Film Details
+                View Details
               </Button>
             </Link>
           </CardContent>
