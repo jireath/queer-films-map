@@ -317,23 +317,52 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
         const coordinates = e.features[0].geometry.coordinates.slice();
         const properties = e.features[0].properties;
         
-        // Find the film in our state by ID
+        // Find the full film data in our state by ID
         const film = films.find(f => f.id === properties.id);
-        if (film) {
-          setSelectedFilm(film);
+        
+        // Create a popup with title and year
+        let popupContent = `
+          <div class="p-3">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+              <h3 style="font-weight: bold; margin: 0;">${properties.title} (${properties.year})</h3>
+            </div>
+            <p style="font-size: 0.875rem; margin-top: 8px;"><strong>Location:</strong> ${properties.location}</p>
+        `;
+        
+        // Add director if available (check both film object and properties)
+        const director = film?.director || properties.director;
+        if (director) {
+          popupContent += `<p style="font-size: 0.875rem; margin-top: 4px;"><strong>Director:</strong> ${director}</p>`;
         }
         
-        // Create a popup
-        new mapboxgl.Popup()
-          .setLngLat(coordinates)
-          .setHTML(`
-            <div class="p-2">
-              <h3 class="font-bold">${properties.title} (${properties.year})</h3>
-              <p class="text-sm">${properties.location}</p>
-              <p class="text-sm mt-1">${properties.description}</p>
-              <a href="/films/${properties.id}" class="text-sm text-blue-500 mt-2 block">View details</a>
+        // Add image if available
+        if (film?.image_url || properties.image_url) {
+          popupContent += `
+            <div style="margin-top: 8px; margin-bottom: 8px;">
+              <img src="${properties.image_url}" alt="${properties.title}" 
+                   style="width: 100%; height: 120px; object-fit: cover; border-radius: 4px;">
             </div>
-          `)
+          `;
+        }
+        
+        // Add view details link
+        popupContent += `
+            <a href="/films/${properties.id}" 
+               style="font-size: 0.875rem; color: #3b82f6; display: block; margin-top: 8px; text-decoration: none;">
+              View details
+            </a>
+          </div>
+        `;
+        
+        // Create the popup with custom options
+        new mapboxgl.Popup({
+          maxWidth: '300px',
+          className: 'custom-popup', // We'll add CSS for this
+          closeButton: true,
+          closeOnClick: false
+        })
+          .setLngLat(coordinates)
+          .setHTML(popupContent)
           .addTo(map.current);
       });
 
@@ -501,7 +530,9 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
             title: film.title,
             location: film.location,
             year: film.year,
-            description: film.description
+            description: film.description,
+            director: film.director,
+            image_url: film.image_url || ""
           }
         }))
       };
@@ -733,37 +764,6 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
     debugCoordinatesFormat();
   }, []);
 
-  // A function to ensure consistent coordinate parsing
-  const parseCoordinates = (coordinatesData) => {
-    // Default coordinates (you might want to choose a different default)
-    let lng = 0, lat = 0;
-    
-    // Case 1: Already in the correct format
-    if (coordinatesData && typeof coordinatesData === 'object' && 'lng' in coordinatesData && 'lat' in coordinatesData) {
-      return coordinatesData;
-    }
-    
-    // Case 2: String format like 'POINT(lng lat)'
-    if (typeof coordinatesData === 'string') {
-      const match = coordinatesData.match(/POINT\(([^ ]+) ([^ ]+)\)/);
-      if (match) {
-        lng = parseFloat(match[1]);
-        lat = parseFloat(match[2]);
-        return { lng, lat };
-      }
-    }
-    
-    // Case 3: GeoJSON format
-    if (coordinatesData && coordinatesData.coordinates && Array.isArray(coordinatesData.coordinates)) {
-      lng = coordinatesData.coordinates[0];
-      lat = coordinatesData.coordinates[1];
-      return { lng, lat };
-    }
-    
-    // Return default if nothing else worked
-    return { lng, lat };
-  };
-
   useEffect(() => {
     const checkAuth = async () => {
       try {
@@ -987,52 +987,6 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
           </form>
         </div>
       </Modal>
-      
-      {/* Film details panel (when a film is selected) */}
-      {selectedFilm && (
-        <Card className="absolute bottom-4 right-4 z-10 w-72">
-          <CardHeader className="pb-2">
-            <CardTitle className="flex justify-between items-center">
-              <span>{selectedFilm.title} ({selectedFilm.year})</span>
-              <Button 
-                variant="ghost" 
-                size="icon"
-                onClick={() => setSelectedFilm(null)}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </CardTitle>
-            <CardDescription>
-              <div className="flex items-center gap-1 mb-1">
-                <MapPin className="h-4 w-4" />
-                <span>{selectedFilm.location}</span>
-              </div>
-              {selectedFilm.director && (
-                <div className="flex items-center gap-1">
-                  <Video className="h-4 w-4" />
-                  <span>{selectedFilm.director}</span>
-                </div>
-              )}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="pt-0 pb-3">
-            {selectedFilm.image_url && (
-              <div className="w-full mb-3 overflow-hidden rounded-md h-32">
-                <img 
-                  src={selectedFilm.image_url} 
-                  alt={selectedFilm.title}
-                  className="w-full h-full object-cover"
-                />
-              </div>
-            )}
-            <Link href={`/films/${selectedFilm.id}`} passHref>
-              <Button variant="outline" className="w-full">
-                View Details
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 };

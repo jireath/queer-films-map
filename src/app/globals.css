@@ -93,6 +93,24 @@ body {
     color: hsl(var(--foreground));
   }
 
+  /* Add this to src/app/globals.css */
+  .custom-popup .mapboxgl-popup-close-button {
+    padding: 5px 8px;
+    font-size: 16px;
+    color: #666;
+    right: 5px;
+    top: 5px;
+  }
+
+  .custom-popup .mapboxgl-popup-content {
+    padding: 10px;
+    border-radius: 8px;
+  }
+
+  .custom-popup .mapboxgl-popup-close-button:hover {
+    background-color: transparent;
+    color: #000;
+  }
 }
 
 @layer base {
