@@ -14,7 +14,8 @@ import {
   Film, 
   Home,
   UserPlus,
-  LogIn
+  LogIn,
+  Info
 } from 'lucide-react';
 
 export default function Navigation() {
@@ -26,6 +27,7 @@ export default function Navigation() {
   const navItems = [
     { name: 'Home', href: '/', icon: Home },
     { name: 'Films', href: '/films', icon: Film },
+    { name: 'About', href: '/about', icon: Info },
   ];
   
   // Navigation items for logged in users

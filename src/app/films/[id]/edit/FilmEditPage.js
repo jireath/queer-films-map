@@ -122,63 +122,95 @@ export default function EditFilmPage({ params }) {
   useEffect(() => {
     if (!selectedLocation || !mapContainer.current || map.current) return;
     
+    // Initialize map with better options and handlers
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
       style: 'mapbox://styles/mapbox/dark-v11',
       center: [selectedLocation.lng, selectedLocation.lat],
-      zoom: 10
+      zoom: 10,
+      attributionControl: true,
+      preserveDrawingBuffer: true // This helps with rendering in some cases
     });
     
-    // Add navigation control
-    map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+    // Function to handle style loading
+    const onStyleLoad = () => {
+      if (map.current && map.current.isStyleLoaded()) {
+        console.log("Map style loaded in film edit view");
+        
+        // Add navigation control if not already added
+        if (!map.current.hasControl) {
+          map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+          map.current.hasControl = true;
+        }
+        
+        // Create marker if not already created
+        if (!marker.current) {
+          marker.current = new mapboxgl.Marker({ 
+            color: '#ff69b4',
+            draggable: true
+          })
+            .setLngLat([selectedLocation.lng, selectedLocation.lat])
+            .addTo(map.current);
+          
+          // Add event listener for marker drag end
+          marker.current.on('dragend', () => {
+            const lngLat = marker.current.getLngLat();
+            setSelectedLocation({
+              lng: lngLat.lng,
+              lat: lngLat.lat
+            });
+            
+            // Update location name
+            reverseGeocode(lngLat.lng, lngLat.lat)
+              .then(placeName => {
+                if (placeName) {
+                  setFormData(prev => ({
+                    ...prev,
+                    location: placeName
+                  }));
+                }
+              });
+          });
+        }
+      }
+    };
     
-    // Add marker for the film location
-    marker.current = new mapboxgl.Marker({ 
-      color: '#ff69b4',
-      draggable: true
-    })
-      .setLngLat([selectedLocation.lng, selectedLocation.lat])
-      .addTo(map.current);
-      
-    // Add event listener for marker drag end
-    marker.current.on('dragend', () => {
-      const lngLat = marker.current.getLngLat();
-      setSelectedLocation({
-        lng: lngLat.lng,
-        lat: lngLat.lat
-      });
-      
-      // Update location name
-      reverseGeocode(lngLat.lng, lngLat.lat)
-        .then(placeName => {
-          if (placeName) {
-            setFormData(prev => ({
-              ...prev,
-              location: placeName
-            }));
-          }
-        });
-    });
-      
+    // Listen for both style data and load events
+    map.current.on('styledata', onStyleLoad);
+    map.current.on('load', onStyleLoad);
+    
     // Add click handler for moving marker
     map.current.on('click', (e) => {
-      marker.current.setLngLat(e.lngLat);
-      setSelectedLocation({
-        lng: e.lngLat.lng,
-        lat: e.lngLat.lat
-      });
-      
-      // Update location name
-      reverseGeocode(e.lngLat.lng, e.lngLat.lat)
-        .then(placeName => {
-          if (placeName) {
-            setFormData(prev => ({
-              ...prev,
-              location: placeName
-            }));
-          }
+      if (marker.current) {
+        marker.current.setLngLat(e.lngLat);
+        setSelectedLocation({
+          lng: e.lngLat.lng,
+          lat: e.lngLat.lat
         });
+        
+        // Update location name
+        reverseGeocode(e.lngLat.lng, e.lngLat.lat)
+          .then(placeName => {
+            if (placeName) {
+              setFormData(prev => ({
+                ...prev,
+                location: placeName
+              }));
+            }
+          });
+      }
     });
+    
+    // Force resize after a short delay to help with rendering
+    setTimeout(() => {
+      if (map.current) {
+        map.current.resize();
+        // Trigger a style reload if needed
+        if (!map.current.isStyleLoaded()) {
+          map.current.setStyle('mapbox://styles/mapbox/dark-v11');
+        }
+      }
+    }, 500);
     
     return () => {
       if (map.current) {

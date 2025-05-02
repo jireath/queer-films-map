@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { MapPin, Plus, X, Search, Loader2, Info, Video } from 'lucide-react';
+import { MapPin, Plus, X, Search, Loader2, Info, Video, RefreshCw } from 'lucide-react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useAuth } from '@/contexts/AuthContext';
@@ -74,7 +74,11 @@ const Modal = ({ isOpen, onClose, title, children }) => {
   );
 };
 
+// Debug helper function
 function debugCoordinatesFormat() {
+  // Only run in development
+  if (process.env.NODE_ENV !== 'development') return;
+  
   // Get a supabase client
   const supabase = createClient();
   
@@ -119,6 +123,7 @@ function debugCoordinatesFormat() {
 }
 
 const logCoordinateFormat = (film) => {
+  if (process.env.NODE_ENV !== 'development') return;
   console.log(`Film "${film.title}" coordinates:`, film.coordinates);
   console.log('Type:', typeof film.coordinates);
   console.log('Format:', film.coordinates ? Object.keys(film.coordinates).join(', ') : 'null');
@@ -129,6 +134,8 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
   const map = useRef(null);
   const searchInput = useRef(null);
   const mapInitializedRef = useRef(false);
+  const layersInitializedRef = useRef(false);
+  const retryTimeoutRef = useRef(null);
   
   // Get auth context to determine if user can edit
   const { user } = useAuth();
@@ -149,6 +156,17 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
   const [selectedFilm, setSelectedFilm] = useState(null);
   const [imageFile, setImageFile] = useState(null);
   
+  // Debug state - only used in development mode
+  const [debugInfo, setDebugInfo] = useState({
+    mapInitialized: false,
+    filmsLoaded: 0,
+    dataInitialized: false,
+    lastUpdate: null,
+    layersCreated: false,
+    retryCount: 0,
+    layerStatus: {}
+  });
+  
   const [newFilm, setNewFilm] = useState({
     title: '',
     director: '',
@@ -157,83 +175,53 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
     description: ''
   });
 
-  // Fetch films data
-  useEffect(() => {
-    const fetchFilms = async () => {
-      try {
-        setLoading(true);
-        const supabase = createClient();
-        
-        // Instead of calling getAllApprovedFilms which might not be properly parsing coordinates,
-        // we'll use our new database function that extracts coordinates correctly
-        const { data, error } = await supabase.rpc('get_approved_films');
-        
-        if (error) throw error;
-        
-        console.log('Raw films data from database with extracted coordinates:', data);
-        
-        // Now the data already contains correctly formatted lng and lat properties
-        // No need for complex parsing - just map the data to the expected format
-        const formattedFilms = data.map(film => ({
-          ...film,
-          coordinates: {
-            lng: film.lng,
-            lat: film.lat
-          }
-        }));
-        
-        console.log('Formatted films with coordinates:', formattedFilms);
-        
-        setFilms(formattedFilms);
-        setError(null);
-      } catch (err) {
-        console.error('Error fetching films:', err);
-        setError('Failed to load films. Please try again later.');
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchFilms();
-  }, []);
+  // Update debug info helper
+  const updateDebugInfo = (updates) => {
+    if (process.env.NODE_ENV === 'development') {
+      setDebugInfo(prev => ({
+        ...prev, 
+        ...updates, 
+        lastUpdate: new Date().toLocaleTimeString()
+      }));
+    }
+  };
 
-  // Initialize map
-  useEffect(() => {
-    // Only initialize the map once and when the container exists
-    if (!mapContainer.current || mapInitializedRef.current) return;
-    
-    try {
-      console.log("Initializing map...");
-      map.current = new mapboxgl.Map({
-        container: mapContainer.current,
-        style: 'mapbox://styles/mapbox/dark-v11',
-        center: [-40, 20],
-        zoom: 1.5,
-        projection: 'globe'
+  // Function to initialize map data layers
+  const initializeMapLayers = () => {
+    if (!map.current || !map.current.isStyleLoaded()) {
+      updateDebugInfo({ 
+        retryCount: debugInfo.retryCount + 1,
+        layerStatus: {...debugInfo.layerStatus, initAttempt: 'Map not ready'} 
       });
+      
+      // Schedule retry with backoff
+      const retryDelay = Math.min(1000 * (1 + debugInfo.retryCount / 2), 5000);
+      retryTimeoutRef.current = setTimeout(initializeMapLayers, retryDelay);
+      return false;
+    }
 
-      map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+    try {
+      // Check if source already exists
+      if (!map.current.getSource('films')) {
+        // Add a source for film points that will be clustered
+        map.current.addSource('films', {
+          type: 'geojson',
+          data: {
+            type: 'FeatureCollection',
+            features: []
+          },
+          cluster: true,
+          clusterMaxZoom: 14,
+          clusterRadius: 50
+        });
+        
+        updateDebugInfo({ 
+          layerStatus: {...debugInfo.layerStatus, sourceAdded: true}
+        });
+      }
 
-      // Set flag to avoid re-initialization
-      mapInitializedRef.current = true;
-
-      // Wait for map to load before adding data
-      map.current.on('load', () => {
-        console.log("Map loaded, adding data layers...");
-        setMapLoaded(true);
-        // Check if source already exists (avoid duplicate sources)
-        if (!map.current.getSource('films')) {
-          // Add a source for film points that will be clustered
-          map.current.addSource('films', {
-            type: 'geojson',
-            data: {
-              type: 'FeatureCollection',
-              features: []
-            },
-            cluster: true,
-            clusterMaxZoom: 14,
-            clusterRadius: 50
-          })};
-
+      // Check if layers already exist
+      if (!map.current.getLayer('clusters')) {
         // Add cluster circles
         map.current.addLayer({
           id: 'clusters',
@@ -261,7 +249,13 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
             ]
           }
         });
+        
+        updateDebugInfo({ 
+          layerStatus: {...debugInfo.layerStatus, clustersAdded: true}
+        });
+      }
 
+      if (!map.current.getLayer('cluster-count')) {
         // Add cluster count labels
         map.current.addLayer({
           id: 'cluster-count',
@@ -277,7 +271,13 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
             'text-color': '#ffffff'
           }
         });
+        
+        updateDebugInfo({ 
+          layerStatus: {...debugInfo.layerStatus, clusterCountAdded: true}
+        });
+      }
 
+      if (!map.current.getLayer('unclustered-point')) {
         // Add unclustered point layer
         map.current.addLayer({
           id: 'unclustered-point',
@@ -291,12 +291,349 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
             'circle-stroke-color': '#fff'
           }
         });
+        
+        updateDebugInfo({ 
+          layerStatus: {...debugInfo.layerStatus, pointsAdded: true}
+        });
+      }
 
-        // Update initial data
-        updateMapData();
+      // Mark layers as initialized
+      layersInitializedRef.current = true;
+      updateDebugInfo({ 
+        layersCreated: true,
+        layerStatus: {...debugInfo.layerStatus, complete: true}
       });
 
-      // Add click handlers
+      return true;
+    } catch (error) {
+      console.error('Error initializing map layers:', error);
+      updateDebugInfo({ 
+        layerStatus: {...debugInfo.layerStatus, error: error.message}
+      });
+      
+      // Schedule retry with backoff
+      const retryDelay = Math.min(1000 * (1 + debugInfo.retryCount / 2), 5000);
+      retryTimeoutRef.current = setTimeout(initializeMapLayers, retryDelay);
+      return false;
+    }
+  };
+
+  // Function to check and fix layers if they're missing
+  const checkAndFixLayers = () => {
+    if (!map.current || !map.current.isStyleLoaded()) return false;
+    
+    try {
+      // Check if source exists
+      if (!map.current.getSource('films')) {
+        console.warn('Films source is missing, attempting to recreate...');
+        updateDebugInfo({ 
+          layerStatus: {...debugInfo.layerStatus, checkResult: 'Source missing'}
+        });
+        return initializeMapLayers();
+      }
+      
+      // Check if layers exist
+      const layersToCheck = ['clusters', 'cluster-count', 'unclustered-point'];
+      let allLayersPresent = true;
+      
+      for (const layerId of layersToCheck) {
+        if (!map.current.getLayer(layerId)) {
+          console.warn(`Layer ${layerId} is missing, need to recreate layers`);
+          allLayersPresent = false;
+          
+          // Try to remove all layers and source to start fresh
+          for (const id of layersToCheck) {
+            try {
+              if (map.current.getLayer(id)) {
+                map.current.removeLayer(id);
+              }
+            } catch (e) {
+              console.error(`Error removing layer ${id}:`, e);
+            }
+          }
+          
+          try {
+            if (map.current.getSource('films')) {
+              map.current.removeSource('films');
+            }
+          } catch (e) {
+            console.error('Error removing films source:', e);
+          }
+          
+          // Recreate all layers
+          updateDebugInfo({ 
+            layerStatus: {...debugInfo.layerStatus, checkResult: 'Layers missing, recreating'}
+          });
+          return initializeMapLayers();
+        }
+      }
+      
+      updateDebugInfo({ 
+        layerStatus: {...debugInfo.layerStatus, checkResult: 'All layers present'}
+      });
+      return allLayersPresent;
+    } catch (e) {
+      console.error('Error checking layers:', e);
+      updateDebugInfo({ 
+        layerStatus: {...debugInfo.layerStatus, checkError: e.message}
+      });
+      return false;
+    }
+  };
+
+  // Update map data with current films
+  const updateMapData = () => {
+    // If map isn't ready, defer the update
+    if (!map.current || !map.current.isStyleLoaded()) {
+      console.log("Map not ready for data update, will retry in 1000ms");
+      updateDebugInfo({ 
+        layerStatus: {...debugInfo.layerStatus, updateAttempt: 'Map not ready'}
+      });
+      setTimeout(updateMapData, 1000);
+      return;
+    }
+
+    // Check if layers are initialized, if not, initialize them
+    if (!layersInitializedRef.current) {
+      if (!initializeMapLayers()) {
+        console.log("Layers not initialized, retrying later");
+        updateDebugInfo({ 
+          layerStatus: {...debugInfo.layerStatus, updateAttempt: 'Layers not ready'}
+        });
+        setTimeout(updateMapData, 1000);
+        return;
+      }
+    }
+
+    try {
+      // Verify the source still exists, if not recreate layers
+      if (!map.current.getSource('films')) {
+        console.warn("Films source not found, reinitializing map data");
+        layersInitializedRef.current = false;
+        updateDebugInfo({ 
+          layerStatus: {...debugInfo.layerStatus, updateAttempt: 'Source missing'}
+        });
+        initializeMapLayers();
+        
+        // Retry after layers are recreated
+        setTimeout(updateMapData, 1000);
+        return;
+      }
+
+      console.log("Updating map data with films:", films.length);
+      updateDebugInfo({ 
+        filmsLoaded: films.length,
+        layerStatus: {...debugInfo.layerStatus, updateAttempt: 'Updating with ' + films.length + ' films'}
+      });
+      
+      // First validate all coordinates to ensure they're valid
+      const validFilms = films.filter(film => {
+        // Only keep films with valid coordinates
+        const hasValidCoords = film.coordinates && 
+                            typeof film.coordinates.lat === 'number' && 
+                            typeof film.coordinates.lng === 'number' &&
+                            !isNaN(film.coordinates.lat) && 
+                            !isNaN(film.coordinates.lng);
+                            
+        if (!hasValidCoords) {
+          console.warn(`Film "${film.title}" has invalid coordinates:`, film.coordinates);
+        }
+        
+        // Skip films at 0,0 coordinates (likely parsing errors)
+        const isAtOrigin = film.coordinates && 
+                          film.coordinates.lat === 0 && 
+                          film.coordinates.lng === 0;
+                          
+        if (isAtOrigin) {
+          console.warn(`Film "${film.title}" is at 0,0 coordinates, likely an error`);
+        }
+        
+        return hasValidCoords && !isAtOrigin;
+      });
+      
+      console.log(`Found ${validFilms.length} films with valid coordinates out of ${films.length} total`);
+      updateDebugInfo({ 
+        layerStatus: {...debugInfo.layerStatus, validFilms: validFilms.length}
+      });
+      
+      // Create GeoJSON feature collection with only valid coordinates
+      const geojson = {
+        type: 'FeatureCollection',
+        features: validFilms.map(film => ({
+          type: 'Feature',
+          geometry: {
+            type: 'Point',
+            coordinates: [film.coordinates.lng, film.coordinates.lat] // Mapbox expects [longitude, latitude]
+          },
+          properties: {
+            id: film.id,
+            title: film.title,
+            location: film.location,
+            year: film.year,
+            description: film.description,
+            director: film.director,
+            image_url: film.image_url || ""
+          }
+        }))
+      };
+
+      // Set the data on the source
+      const source = map.current.getSource('films');
+      if (source) {
+        console.log("Updating films source with", geojson.features.length, "features");
+        source.setData(geojson);
+        
+        updateDebugInfo({ 
+          dataInitialized: true,
+          layerStatus: {...debugInfo.layerStatus, dataUpdated: geojson.features.length + ' features'}
+        });
+        
+        // Verify the update worked by checking the layer visibility
+        setTimeout(() => {
+          checkAndFixLayers();
+        }, 500);
+      } else {
+        console.warn("Films source not found on map");
+        updateDebugInfo({ 
+          layerStatus: {...debugInfo.layerStatus, updateError: 'Source disappeared'}
+        });
+        
+        // Try to reinitialize
+        layersInitializedRef.current = false;
+        initializeMapLayers();
+        
+        // Retry data update
+        setTimeout(updateMapData, 1000);
+      }
+    } catch (error) {
+      console.error("Error updating map data:", error);
+      updateDebugInfo({ 
+        layerStatus: {...debugInfo.layerStatus, updateError: error.message}
+      });
+      
+      // Try to recover
+      setTimeout(() => {
+        checkAndFixLayers();
+        updateMapData();
+      }, 2000);
+    }
+  };
+
+  // Fetch films data
+  useEffect(() => {
+    const fetchFilms = async () => {
+      try {
+        setLoading(true);
+        const supabase = createClient();
+        
+        // Instead of calling getAllApprovedFilms which might not be properly parsing coordinates,
+        // we'll use our new database function that extracts coordinates correctly
+        const { data, error } = await supabase.rpc('get_approved_films');
+        
+        if (error) throw error;
+        
+        console.log('Raw films data from database with extracted coordinates:', data);
+        
+        // Now the data already contains correctly formatted lng and lat properties
+        // No need for complex parsing - just map the data to the expected format
+        const formattedFilms = data.map(film => ({
+          ...film,
+          coordinates: {
+            lng: film.lng,
+            lat: film.lat
+          }
+        }));
+        
+        console.log('Formatted films with coordinates:', formattedFilms);
+        updateDebugInfo({ filmsLoaded: formattedFilms.length });
+        
+        setFilms(formattedFilms);
+        setError(null);
+      } catch (err) {
+        console.error('Error fetching films:', err);
+        setError('Failed to load films. Please try again later.');
+        updateDebugInfo({ filmsLoadError: err.message });
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchFilms();
+    
+    // In development mode, debug coordinate format issues
+    if (process.env.NODE_ENV === 'development') {
+      debugCoordinatesFormat();
+    }
+  }, []);
+
+  // Initialize map
+  useEffect(() => {
+    // Only initialize the map once and when the container exists
+    if (!mapContainer.current || mapInitializedRef.current) return;
+    
+    try {
+      console.log("Initializing map...");
+      map.current = new mapboxgl.Map({
+        container: mapContainer.current,
+        style: 'mapbox://styles/mapbox/dark-v11',
+        center: [-40, 20],
+        zoom: 1.5,
+        projection: 'globe'
+      });
+
+      // Add listener for style data loading
+      map.current.on('styledata', () => {
+        if (map.current.isStyleLoaded()) {
+          console.log("Map style loaded completely");
+          updateDebugInfo({ styleLoaded: true });
+          
+          // Try to initialize layers after style loads
+          if (!layersInitializedRef.current) {
+            initializeMapLayers();
+            
+            // If films data is already loaded, update the map
+            if (films.length > 0) {
+              updateMapData();
+            }
+          }
+        }
+      });
+
+      // Original load event
+      map.current.on('load', () => {
+        console.log("Map loaded event fired");
+        setMapLoaded(true);
+        updateDebugInfo({ mapInitialized: true });
+        
+        // Initialize layers and add data if available
+        if (!layersInitializedRef.current) {
+          initializeMapLayers();
+        }
+        
+        // If films data is already loaded, update the map
+        if (films.length > 0) {
+          updateMapData();
+        }
+      });
+
+      // Add navigation controls
+      map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+      mapInitializedRef.current = true;
+
+      // Safety timeout to ensure initialization happens
+      setTimeout(() => {
+        if (map.current && !layersInitializedRef.current) {
+          console.log("Safety initialization after timeout");
+          updateDebugInfo({ safetyInitTriggered: true });
+          initializeMapLayers();
+          
+          // If films data is already loaded, update the map
+          if (films.length > 0) {
+            updateMapData();
+          }
+        }
+      }, 3000);
+
+      // Add click handlers for clusters
       map.current.on('click', 'clusters', (e) => {
         const features = map.current.queryRenderedFeatures(e.point, {
           layers: ['clusters']
@@ -314,6 +651,7 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
         );
       });
 
+      // Add click handler for individual film points
       map.current.on('click', 'unclustered-point', (e) => {
         const coordinates = e.features[0].geometry.coordinates.slice();
         const properties = e.features[0].properties;
@@ -423,7 +761,7 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
         confirmButton.onclick = (e) => {
           e.preventDefault();
           
-            // Save the confirmed location - THIS IS NEW
+          // Save the confirmed location
           setConfirmedLocation(coordinates);
 
           // Open the modal
@@ -459,6 +797,7 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
           }
         });
       });
+      
       // Change cursor on hover
       map.current.on('mouseenter', ['clusters', 'unclustered-point'], () => {
         map.current.getCanvas().style.cursor = 'pointer';
@@ -471,87 +810,23 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
     } catch (error) {
       console.error('Error initializing map:', error);
       setError('Failed to initialize map. Please refresh the page.');
+      updateDebugInfo({ initError: error.message });
     }
     
     return () => {
+      // Clean up timeouts
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
+      
+      // Clean up map instance
       if (map.current) {
         map.current.remove();
         mapInitializedRef.current = false;
+        layersInitializedRef.current = false;
       }
     };
   }, []);
-
-  // Update map data when films change
-  const updateMapData = () => {
-    // If map or style isn't loaded yet, retry after a short delay
-    if (!map.current || !map.current.isStyleLoaded()) {
-      console.log("Map not ready for data update, will retry in 500ms");
-      setTimeout(updateMapData, 500);
-      return;
-    }
-
-    try {
-      console.log("Updating map data with films:", films.length);
-      
-      // First validate all coordinates to ensure they're valid
-      const validFilms = films.filter(film => {
-        // Only keep films with valid coordinates
-        const hasValidCoords = film.coordinates && 
-                            typeof film.coordinates.lat === 'number' && 
-                            typeof film.coordinates.lng === 'number' &&
-                            !isNaN(film.coordinates.lat) && 
-                            !isNaN(film.coordinates.lng);
-                            
-        if (!hasValidCoords) {
-          console.warn(`Film "${film.title}" has invalid coordinates:`, film.coordinates);
-        }
-        
-        // Skip films at 0,0 coordinates (likely parsing errors)
-        const isAtOrigin = film.coordinates && 
-                          film.coordinates.lat === 0 && 
-                          film.coordinates.lng === 0;
-                          
-        if (isAtOrigin) {
-          console.warn(`Film "${film.title}" is at 0,0 coordinates, likely an error`);
-        }
-        
-        return hasValidCoords && !isAtOrigin;
-      });
-      
-      console.log(`Found ${validFilms.length} films with valid coordinates out of ${films.length} total`);
-      
-      // Create GeoJSON feature collection with only valid coordinates
-      const geojson = {
-        type: 'FeatureCollection',
-        features: validFilms.map(film => ({
-          type: 'Feature',
-          geometry: {
-            type: 'Point',
-            coordinates: [film.coordinates.lng, film.coordinates.lat] // Mapbox expects [longitude, latitude]
-          },
-          properties: {
-            id: film.id,
-            title: film.title,
-            location: film.location,
-            year: film.year,
-            description: film.description,
-            director: film.director,
-            image_url: film.image_url || ""
-          }
-        }))
-      };
-
-      const source = map.current.getSource('films');
-      if (source) {
-        console.log("Updating films source with", geojson.features.length, "features");
-        source.setData(geojson);
-      } else {
-        console.warn("Films source not found on map");
-      }
-    } catch (error) {
-      console.error("Error updating map data:", error);
-    }
-  };  
 
   // Function to search for locations
   const handleSearch = async (query) => {
@@ -577,7 +852,6 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
   };
 
   // Function to reverse geocode coordinates to a place name
-  // Enhanced reverseGeocode function with validation and error handling
   const reverseGeocode = async (lng, lat) => {
     try {
       // Validate coordinates (longitude: -180 to 180, latitude: -90 to 90)
@@ -751,52 +1025,96 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
     }
   }, [readOnly]);
 
-  // Update map data whenever films change
+  // Update map data whenever films change or map loads
   useEffect(() => {
     if (films.length > 0 && mapLoaded) {
-      console.log('Films changed, updating map data...');
+      console.log('Films changed or map loaded, updating map data...');
+      updateDebugInfo({ 
+        filmsLoaded: films.length,
+        updateTriggered: 'films/mapLoaded change' 
+      });
       updateMapData();
     }
   }, [films, mapLoaded]);
 
+  // Force a map data refresh if layers aren't visible after a delay
   useEffect(() => {
-    if (user) {
-      console.log('Authenticated user:', user);
-      console.log('User ID:', user.id);
-    } else {
-      console.log('No authenticated user');
+    if (mapLoaded && films.length > 0) {
+      // After 2 seconds, check if layers are visible and fix if needed
+      const timeout = setTimeout(() => {
+        if (!layersInitializedRef.current || !checkAndFixLayers()) {
+          console.log("Layers not properly created, reinitializing");
+          updateDebugInfo({ forcedReinit: true });
+          
+          layersInitializedRef.current = false;
+          initializeMapLayers();
+          setTimeout(updateMapData, 500);
+        }
+      }, 2000);
+      
+      return () => clearTimeout(timeout);
+    }
+  }, [mapLoaded, films.length]);
+
+  // Debug authentication state
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      if (user) {
+        console.log('Authenticated user:', user);
+        console.log('User ID:', user.id);
+        updateDebugInfo({ authenticated: true, userId: user.id });
+      } else {
+        console.log('No authenticated user');
+        updateDebugInfo({ authenticated: false });
+      }
     }
   }, [user]);
 
-  useEffect(() => {
-    debugCoordinatesFormat();
-  }, []);
+  // Function to manually force data refresh
+  const forceDataRefresh = () => {
+    // Reinitialize layers
+    layersInitializedRef.current = false;
+    if (initializeMapLayers()) {
+      // If layers initialized successfully, update data
+      setTimeout(updateMapData, 500);
+    }
+  };
 
-  useEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const supabase = createClient();
-        const { data, error } = await supabase.auth.getSession();
+  // Function to reset and reinitialize completely
+  const hardReset = () => {
+    // Remove all map layers and sources
+    try {
+      if (map.current) {
+        ['clusters', 'cluster-count', 'unclustered-point'].forEach(layerId => {
+          if (map.current.getLayer(layerId)) {
+            map.current.removeLayer(layerId);
+          }
+        });
         
-        console.log("Auth session check:");
-        console.log("Session exists:", !!data.session);
-        if (data.session) {
-          console.log("User ID from session:", data.session.user.id);
-          console.log("User email:", data.session.user.email);
-          console.log("Token expiry:", new Date(data.session.expires_at * 1000).toLocaleString());
+        if (map.current.getSource('films')) {
+          map.current.removeSource('films');
         }
-        
-        if (error) {
-          console.error("Session error:", error);
-        }
-      } catch (err) {
-        console.error("Auth checking error:", err);
       }
-    };
+    } catch (e) {
+      console.error('Error during hard reset:', e);
+    }
     
-    checkAuth();
-  }, []);
-  
+    // Reset refs and states
+    layersInitializedRef.current = false;
+    updateDebugInfo({ 
+      mapInitialized: true,
+      dataInitialized: false,
+      layersCreated: false,
+      forcedReset: true,
+      layerStatus: {}
+    });
+    
+    // Reinitialize
+    setTimeout(() => {
+      initializeMapLayers();
+      setTimeout(updateMapData, 500);
+    }, 500);
+  };
 
   return (
     <div className="w-full h-screen relative">
@@ -892,6 +1210,39 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Debug panel - only visible in development */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="absolute bottom-4 left-4 z-10 bg-black/70 text-white p-3 rounded text-xs max-w-xs">
+          <h3 className="font-bold mb-1">Debug Info</h3>
+          <div>Map Initialized: {debugInfo.mapInitialized ? '✅' : '❌'}</div>
+          <div>Films Loaded: {debugInfo.filmsLoaded}</div>
+          <div>Data Initialized: {debugInfo.dataInitialized ? '✅' : '❌'}</div>
+          <div>Layers Created: {debugInfo.layersCreated ? '✅' : '❌'}</div>
+          <div>Last Update: {debugInfo.lastUpdate || 'Never'}</div>
+          
+          <div className="mt-2 flex space-x-2">
+            <Button 
+              size="sm"
+              variant="outline"
+              className="text-xs py-1 px-2 h-auto bg-blue-500/20 hover:bg-blue-500/40 text-white"
+              onClick={forceDataRefresh}
+            >
+              <RefreshCw className="h-3 w-3 mr-1" />
+              Refresh
+            </Button>
+            
+            <Button 
+              size="sm"
+              variant="destructive"
+              className="text-xs py-1 px-2 h-auto"
+              onClick={hardReset}
+            >
+              Reset
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Add Film Modal Dialog */}
       <Modal 

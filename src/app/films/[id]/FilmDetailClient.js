@@ -20,36 +20,66 @@ export default function FilmDetailClient({ film, author, error }) {
   // We still need loading state for client-side operations
   const [loading, setLoading] = useState(false);
 
-  // Initialize map once film data is loaded
+  // In the useEffect for map initialization in FilmDetailClient.js
   useEffect(() => {
     if (!film || !mapContainer.current || map.current) return;
     
+    // Initialize the map with explicit style options
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
       style: 'mapbox://styles/mapbox/dark-v11',
       center: [film.coordinates.lng, film.coordinates.lat],
       zoom: 10,
-      interactive: true
+      interactive: true,
+      attributionControl: true // Ensure attribution control is enabled
     });
     
-    // Wait for map to load before adding marker
-    map.current.on('load', () => {
-      // Add navigation control
-      map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
-      
-      // Add marker for the film location
-      new mapboxgl.Marker({ color: '#ff69b4' })
-        .setLngLat([film.coordinates.lng, film.coordinates.lat])
-        .addTo(map.current);
-    });
+    // Handle both the load event and style data events
+    const onStyleLoad = () => {
+      if (map.current && map.current.isStyleLoaded()) {
+        console.log("Map style loaded in film detail view");
         
+        // Add navigation control
+        if (!map.current.hasControl) {
+          map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+          map.current.hasControl = true;
+        }
+        
+        // Add marker for the film location - using a try/catch to be safe
+        try {
+          new mapboxgl.Marker({ color: '#ff69b4' })
+            .setLngLat([film.coordinates.lng, film.coordinates.lat])
+            .addTo(map.current);
+        } catch (err) {
+          console.error("Error adding marker:", err);
+        }
+      }
+    };
+    
+    // Listen for style data events (fires multiple times during loading)
+    map.current.on('styledata', onStyleLoad);
+    
+    // Also listen for the main load event
+    map.current.on('load', onStyleLoad);
+    
+    // Force a resize after a short delay to help with rendering
+    setTimeout(() => {
+      if (map.current) {
+        map.current.resize();
+        // Trigger a style reload if needed
+        if (!map.current.isStyleLoaded()) {
+          map.current.setStyle('mapbox://styles/mapbox/dark-v11');
+        }
+      }
+    }, 500);
+    
     return () => {
       if (map.current) {
         map.current.remove();
         map.current = null;
       }
     };
-  }, [film]);  
+  }, [film]);
 
   // Convert the loading screen UI to use our prop-based approach
   if (!film && !error) {
