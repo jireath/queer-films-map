@@ -145,6 +145,7 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
   const [films, setFilms] = useState([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [confirmedLocation, setConfirmedLocation] = useState(null);
   const [selectedFilm, setSelectedFilm] = useState(null);
   const [imageFile, setImageFile] = useState(null);
   
@@ -422,6 +423,9 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
         confirmButton.onclick = (e) => {
           e.preventDefault();
           
+            // Save the confirmed location - THIS IS NEW
+          setConfirmedLocation(coordinates);
+
           // Open the modal
           setShowAddModal(true);
           
@@ -626,7 +630,10 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
   const handleAddFilm = async (e) => {
     e.preventDefault();
     
-    if (!selectedLocation) {
+    // Use confirmedLocation if available, otherwise use selectedLocation
+    const locationToUse = confirmedLocation || selectedLocation;
+    
+    if (!locationToUse) {
       alert("Please select a location on the map first");
       return;
     }
@@ -665,9 +672,9 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
       const filmData = {
         title: newFilm.title || "Untitled Film",
         director: newFilm.director || null,
-        location: newFilm.location || `Location at ${selectedLocation.lat.toFixed(4)}, ${selectedLocation.lng.toFixed(4)}`,
+        location: newFilm.location || `Location at ${locationToUse.lat.toFixed(4)}, ${locationToUse.lng.toFixed(4)}`,
         // Store PostGIS point data - ensure correct formatting
-        coordinates: `POINT(${selectedLocation.lng} ${selectedLocation.lat})`,
+        coordinates: `POINT(${locationToUse.lng} ${locationToUse.lat})`,
         year: parseInt(newFilm.year, 10) || new Date().getFullYear(),
         description: newFilm.description || "No description provided",
         // Use the ID directly from the session
@@ -685,8 +692,8 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
       const newFilmForState = {
         ...addedFilm,
         coordinates: {
-          lng: selectedLocation.lng,
-          lat: selectedLocation.lat
+          lng: locationToUse.lng,
+          lat: locationToUse.lat
         }
       };
       
@@ -696,6 +703,7 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
       // Reset form
       setNewFilm({ title: '', director: '', location: '', year: '', description: '' });
       setSelectedLocation(null);
+      setConfirmedLocation(null);
       setImageFile(null);
       setShowAddModal(false);
       
@@ -825,7 +833,13 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
               <span>Queer Films Archive</span>
               {!readOnly && (
                 <Button 
-                  onClick={() => setShowAddModal(true)}
+                  onClick={() => {
+                    // Reset confirmed location when manually opening the modal
+                    // This forces users to select a new location on the map
+                    setConfirmedLocation(null);
+                    setSelectedLocation(null);
+                    setShowAddModal(true);
+                  }}
                   className="flex items-center gap-2"
                 >
                   <Plus className="h-4 w-4" />
@@ -885,6 +899,7 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
         onClose={() => {
           setShowAddModal(false);
           setSelectedLocation(null);
+          setConfirmedLocation(null);
           setImageFile(null);
           
           // Clear temporary UI elements
@@ -900,6 +915,22 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
         title="Add New Film"
       >
         <div className="space-y-4">
+          {/* Display warning if no location is selected */}
+          {!confirmedLocation && !selectedLocation && (
+            <div className="p-3 bg-yellow-100 text-yellow-800 rounded-md mb-4">
+              Please select a location on the map first.
+              <Button 
+                variant="link" 
+                onClick={() => {
+                  setShowAddModal(false);
+                }}
+                className="ml-2 p-0 text-yellow-800 underline"
+              >
+                Close and select location
+              </Button>
+            </div>
+          )}
+          
           <p className="text-muted-foreground">
             Your submission will be reviewed before being added to the public archive.
           </p>
@@ -938,7 +969,7 @@ const QueerFilmsMap = ({ readOnly: explicitReadOnly }) => {
             <div>
               <label className="block text-sm font-medium mb-2">Description</label>
               <textarea
-                placeholder="Describe the film and its significance to queer cinema"
+                placeholder="Describe the film and its significance to queer cinema, your identity, or whatever your heart desires :)."
                 value={newFilm.description}
                 onChange={(e) => setNewFilm({...newFilm, description: e.target.value})}
                 required
